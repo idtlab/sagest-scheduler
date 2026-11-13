@@ -1,0 +1,23 @@
+{
+  "name": "smoke",
+  "run_dir": "../runs/smoke",
+  "cycles": 2,
+  "poll_seconds": 5,
+  "queue": "pbatch",
+  "bank": "YOUR_BANK",
+  "time": {"member": "1m", "analysis": "1m", "buffer": "1m", "reserve": "2m"},
+  "allocation": {"nodes": 2},
+  "ensemble": {
+    "size": 4,
+    "command": ["python3", "{config_dir}/../examples/ensemble_member.py"],
+    "params": {"dt": 0.01, "sleep_seconds": 5, "demo_failures": true},
+    "retries": 2,
+    "failures": {
+      "NUMERICAL_INSTABILITY": {"exit_code": 20, "retries": 3}
+    }
+  },
+  "analysis": {
+    "command": ["python3", "{config_dir}/../examples/post_analysis.py"],
+    "retries": 2
+  }
+}
