@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: test (flux-core ${{ matrix.flux }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Pinned release the code was developed against, plus the latest build.
+        flux: [noble-v0.91.0, noble]
+    container:
+      image: fluxrm/flux-core:${{ matrix.flux }}
+      # The image defaults to an unprivileged user that can't write the mounted workspace.
+      options: --user root
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Versions
+        run: |
+          flux version
+          python3 --version
+
+      - name: Unit and Flux integration tests
+        run: |
+          flux start --test-size=2 python3 -m unittest discover -s tests -v 2>&1 | tee test.log
+          # The integration tests skip themselves outside Flux; make sure they actually ran.
+          if grep -q 'skipped' test.log; then
+            echo "::error::some tests were skipped"
+            exit 1
+          fi
