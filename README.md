@@ -1,4 +1,4 @@
-# Minimal Flux ensemble wrapper
+# MiniFEW
 
 **Full documentation: [docs/USER_GUIDE.md](docs/USER_GUIDE.md)**, covering every command, config
 setting, file and behavior.
