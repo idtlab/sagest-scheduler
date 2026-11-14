@@ -23,18 +23,67 @@ jobs:
       run:
         shell: bash
     steps:
+      # Without git in the container, checkout downloads a tarball that can't take submodules.
+      - name: Git
+        run: apt-get update -q && apt-get install -y -q --no-install-recommends git ca-certificates
+
       - uses: actions/checkout@v5
+
+      - name: Submodules and build tools
+        env:
+          SAGESTGIT_TOKEN: ${{ secrets.SAGESTGIT_TOKEN }}
+        run: |
+          scripts/ubuntu-runner/fetch-submodules.sh
+          scripts/ubuntu-runner/install-deps.sh
 
       - name: Versions
         run: |
           flux version
           python3 --version
 
-      - name: Unit and Flux integration tests
+      - uses: actions/cache@v4
+        with:
+          path: build/ubuntu-runner/deps
+          key: deps-${{ matrix.flux }}-${{ hashFiles('scripts/common/build.sh') }}
+
+      # Builds HashBrick and euler-miniapp, then runs every test in Flux, failing on skips.
+      - name: Build and test
+        run: scripts/ubuntu-runner/test.sh
+
+  # No GPU on GitHub's runners, so this only checks that the CUDA code still compiles.
+  cuda-build:
+    name: build (CUDA ${{ matrix.cuda }}, compile only)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: ["12.8.1"]
+    container:
+      image: nvidia/cuda:${{ matrix.cuda }}-devel-ubuntu24.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Git
+        run: apt-get update -q && apt-get install -y -q --no-install-recommends git ca-certificates
+
+      - uses: actions/checkout@v5
+
+      - name: Submodules and build tools
+        env:
+          SAGESTGIT_TOKEN: ${{ secrets.SAGESTGIT_TOKEN }}
         run: |
-          flux start --test-size=2 python3 -m unittest discover -s tests -v 2>&1 | tee test.log
-          # The integration tests skip themselves outside Flux; make sure they actually ran.
-          if grep -q 'skipped' test.log; then
-            echo "::error::some tests were skipped"
-            exit 1
-          fi
+          scripts/ubuntu-runner/fetch-submodules.sh
+          scripts/ubuntu-runner/install-deps.sh
+          nvcc --version
+
+      - uses: actions/cache@v4
+        with:
+          path: build/ubuntu-runner/deps
+          key: deps-cuda-${{ matrix.cuda }}-${{ hashFiles('scripts/common/build.sh') }}
+
+      # A100 (Perlmutter) and GH200; each rebuilds HashBrick and euler-miniapp from clean.
+      - name: Build HashBrick, euler-miniapp and libMLEF for sm_80
+        run: scripts/ubuntu-runner/build.sh --cuda --cuda-arch 80
+      - name: Build HashBrick, euler-miniapp and libMLEF for sm_90
+        run: scripts/ubuntu-runner/build.sh --cuda --cuda-arch 90

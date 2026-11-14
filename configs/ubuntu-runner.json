@@ -1,0 +1,26 @@
+{
+  "name": "euler-shocktube",
+  "run_dir": "../runs/ubuntu-runner",
+  "cycles": 3,
+  "poll_seconds": 1,
+  "time": {"member": "1m", "analysis": "1m", "buffer": "1m"},
+  "ensemble": {
+    "size": 4,
+    "command": ["python3", "{config_dir}/../components/euler_member.py"],
+    "params": {
+      "steps_per_cycle": 10,
+      "overrides": {"number_cells": "31 31"},
+      "perturb": {"sigma": 0.05, "seed_base": 1,
+                  "keys": {"SHOCK.pressureLow": 10000, "SHOCK.pressureHigh": 100000,
+                           "SHOCK.densityLow": 0.125, "SHOCK.densityHigh": 1.0}}
+    },
+    "retries": 1,
+    "failures": {
+      "NUMERICAL_INSTABILITY": {"exit_code": 20, "retries": 0}
+    }
+  },
+  "analysis": {
+    "command": ["python3", "{config_dir}/../components/mlef_stub.py"],
+    "retries": 1
+  }
+}

@@ -1,0 +1,12 @@
+[submodule "external/libMLEF"]
+	path = external/libMLEF
+	url = https://sagestgit.cs.virginia.edu/justin-yankow/libMLEF.git
+	ignore = untracked
+[submodule "external/euler-miniapp"]
+	path = external/euler-miniapp
+	url = https://sagestgit.cs.virginia.edu/exascale/euler-miniapp.git
+	branch = libMLEF
+[submodule "external/hashbrick"]
+	path = external/hashbrick
+	url = https://sagestgit.cs.virginia.edu/exascale/hashbrick.git
+	branch = libMLEF

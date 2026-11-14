@@ -126,7 +126,7 @@ class ValidationTests(unittest.TestCase):
 
     def test_valid_and_shipped_configs_pass(self):
         self.assertEqual(campaign.validate(self.base()), [])
-        for name in ("tuolumne.json", "smoke.json"):
+        for name in ("tuolumne.json", "smoke.json", "ubuntu-runner.json"):
             with open(os.path.join(ROOT, "configs", name)) as handle:
                 self.assertEqual(campaign.validate(json.load(handle)), [], name)
 

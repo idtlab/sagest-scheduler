@@ -98,11 +98,45 @@ The analysis can write `$ORCH_DIR/next_cycle.json`:
 `{"continue": true, "params": {...}}`. Those values carry into later cycles, and
 `"continue": false` ends the campaign early.
 
+## euler-miniapp ensembles
+
+`external/` holds euler-miniapp and HashBrick (both on their `libMLEF` branches) and libMLEF,
+as submodules. They're private, so fetching them needs access to sagestgit.cs.virginia.edu:
+
+```bash
+git submodule update --init
+scripts/ubuntu-runner/build.sh     # or scripts/perlmutter/ or scripts/tuolumne/
+```
+
+Each platform's `build.sh` builds the CPU versions of HashBrick and euler-miniapp
+(`external/euler-miniapp/main_cpu`, 2D by default, `--spacedim 3` for 3D). CGNS and a serial
+HDF5 are built from source into `build/<platform>/deps` unless `CGNS_DIR` points at an
+install. The Perlmutter and Tuolumne scripts haven't been run on those machines yet.
+
+`--cuda` builds the GPU versions instead (`main_gpu`) along with libMLEF's `mlef` and its
+tests. It needs the CUDA toolkit but no GPU; `--cuda-arch 80` targets A100s, and the default
+is 90. HashBrick's configure can't detect a GPU on a build machine, so it always uses its GH200
+preset, and only the architecture changes.
+
+`configs/ubuntu-runner.json` runs a small ShockTube ensemble with
+`components/euler_member.py`. Cycle 0 perturbs each member's initial conditions, as libMLEF's
+`run_ensemble.sh` does, and later cycles restart each member from the analysis. A member exits
+20 if the solution goes non-finite, because euler-miniapp itself exits 0 then.
+
+libMLEF's `mlef` needs CUDA, so the analysis is `components/mlef_stub.py` for now. It lays the
+forecasts out the way `mlef` reads them and writes an `mlef.input`, then copies each forecast
+unchanged to where `mlef` would write the analysis.
+
 ## Testing
 
 ```bash
+scripts/ubuntu-runner/test.sh      # builds, then runs every test in Flux; fails on skips
 flux start --test-size=2 python3 -m unittest discover -s tests
 ```
+
+The euler-miniapp tests skip themselves until `main_cpu` is built. CI fetches the submodules
+with the `SAGESTGIT_TOKEN` repository secret. Its CUDA job only compiles, since GitHub's
+runners have no GPU.
 
 On Tuolumne, set `bank` in `configs/smoke.json`, then from a login node:
 
