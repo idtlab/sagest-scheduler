@@ -210,5 +210,5 @@ processes before a large campaign.
 - Don't run two copies on one `run_dir`.
 - If `campaign.py` dies in the moment between a submit and recording the job ID, that job keeps
   running untracked, and its member is submitted again in a new directory.
-- Slurm login mode has run on Perlmutter with the stub analysis. Allocation mode has only run
-  against `tests/fake_slurm`, and `components/mlef_analysis.py` only with `tests/fake_mlef.py`.
+- Slurm login mode has run on Perlmutter, with both the stub and the real `mlef`
+  (`perlmutter-results/`). Allocation mode has only run against `tests/fake_slurm`.
