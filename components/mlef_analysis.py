@@ -14,16 +14,19 @@ Params:
                 scripts/make_shocktube_obs.py uses
   obs_dir       directory of observation files to use instead of a truth run
 
-Writes truth/, observation_<step>.cgns, mlef.input, mlef.log and analysis/mem_XXX into
+Writes truth/, observation_<step>.cgns, mlef.input, mlef.log, job.json (where it ran and how
+long each phase took) and analysis/mem_XXX into
 $ORCH_DIR, and passes analysis/ (and truth/plot/) on to the next cycle.
 """
 import json
 import os
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from euler_member import ROOT, forecast  # noqa: E402
+from job_info import JobInfo  # noqa: E402
 from mlef_stub import gather, write_input  # noqa: E402
 
 DEFAULT_OBSERVATIONS = [[0.10, 0.50, 0.50, 0, 1.0e-4], [0.20, 0.50, 0.50, 0, 1.0e-4],
@@ -40,7 +43,7 @@ def executable(path, what):
     return path
 
 
-def observe(params, manifest, attempt_dir, step):
+def observe(params, manifest, attempt_dir, step, info):
     """Return the observation file for step, generating it from the truth if needed."""
     name = f"observation_{step:06d}.cgns"
     if params.get("obs_dir"):
@@ -53,7 +56,9 @@ def observe(params, manifest, attempt_dir, step):
     truth_dir = os.path.join(attempt_dir, "truth")
     os.makedirs(truth_dir, exist_ok=True)
     restart = member_params.get("truth_dir") if manifest["cycle"] > 0 else None
+    started = time.time()
     truth = forecast(member_params, truth_dir, manifest["cycle"], restart)
+    info.time("truth", started)
     if truth["step"] != step:
         fail(f"truth reached step {truth['step']}, the members {step}")
 
@@ -61,8 +66,10 @@ def observe(params, manifest, attempt_dir, step):
     spec = "".join(" ".join(str(v) for v in point) + "\n"
                    for point in params.get("observations", DEFAULT_OBSERVATIONS))
     path = os.path.join(attempt_dir, name)
+    started = time.time()
     done = subprocess.run([obs_exe, truth["snapshot"], path], input=spec, encoding="utf-8",
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    info.time("make_obs", started)
     print(done.stdout, end="")
     if done.returncode != 0:
         fail(f"make_obs exited {done.returncode}")
@@ -75,17 +82,21 @@ def main():
     with open(os.environ["ORCH_MANIFEST"]) as handle:
         manifest = json.load(handle)
     attempt_dir = os.environ["ORCH_DIR"]
+    info = JobInfo(attempt_dir)
+    print(f"analysis cycle {manifest['cycle']}: {info.summary()}", flush=True)
     mlef = executable(params.get("mlef_exe") or os.environ.get("MLEF_EXE")
                       or os.path.join(ROOT, "external", "libMLEF", "mlef"), "mlef")
 
     results, step, prefix = gather(manifest, attempt_dir)
-    observations, carry = observe(params, manifest, attempt_dir, step)
+    observations, carry = observe(params, manifest, attempt_dir, step, info)
     input_file = write_input(attempt_dir, prefix, step, observations)
 
     print(f"running: {mlef} {input_file}", flush=True)
+    started = time.time()
     with open(os.path.join(attempt_dir, "mlef.log"), "w") as log:
         done = subprocess.run([mlef, input_file], cwd=attempt_dir, stdout=log,
                               stderr=subprocess.STDOUT)
+    info.time("mlef", started)
     with open(os.path.join(attempt_dir, "mlef.log")) as log:
         output = log.read()
     print(output[-4000:], end="", file=sys.stderr if done.returncode else sys.stdout)

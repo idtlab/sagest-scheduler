@@ -34,6 +34,8 @@ result=0
     echo "==> campaign.py exited $code"
     python3 "$ROOT/campaign.py" status "$config" || true
     echo
+    python3 "$ROOT/scripts/common/job_report.py" "$run_dir" || true
+    echo
     python3 "$ROOT/scripts/common/check_euler_run.py" "$run_dir"
 } 2>&1 | tee "$run_dir/report.txt" || result=$?
 "$ROOT/scripts/perlmutter/save-results.sh" "$run_dir"

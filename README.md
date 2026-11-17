@@ -181,6 +181,9 @@ scripts/perlmutter/test-allocation.sh ACCOUNT   # one debug GPU node, all jobs a
 
 Pass a test's run directory as a second argument to resume it. When a test ends, its run
 directory, without the CGNS snapshots, is saved to `perlmutter-results/` to commit and push.
+Its `report.txt` includes `scripts/common/job_report.py`'s table of every job attempt: the
+nodes, CPUs and GPUs it ran on (from the `job.json` each component writes), how long each
+phase took, and `sacct`'s accounting for the same jobs.
 
 ### Tuolumne
 

@@ -16,7 +16,7 @@ Params (from the campaign config, plus restart_dir from the analysis):
   perturb          {"sigma": 0.05, "seed_base": 1, "keys": {"SHOCK.pressureLow": 10000, ...}}
   restart_dir      directory holding mem_XXX/<prefix><step>.cgns from the last analysis
 
-Writes plot/ (the CGNS output) and result.json into $ORCH_DIR. Exits 20 if the solution
+Writes plot/ (the CGNS output), result.json and job.json (where it ran) into $ORCH_DIR. Exits 20 if the solution
 went non-finite, since euler-miniapp itself still exits 0 then.
 """
 import json
@@ -25,6 +25,10 @@ import random
 import re
 import subprocess
 import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from job_info import JobInfo  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EULER_DIR = os.path.join(ROOT, "external", "euler-miniapp")
@@ -125,10 +129,14 @@ def main():
         params = json.load(handle)
     attempt_dir = os.environ["ORCH_DIR"]
     member, cycle = int(os.environ["ORCH_MEMBER_ID"]), int(os.environ["ORCH_CYCLE"])
+    info = JobInfo(attempt_dir)
+    print(f"member {member} cycle {cycle}: {info.summary()}", flush=True)
     restart_dir = None
     if cycle > 0 and params.get("restart_dir"):
         restart_dir = os.path.join(params["restart_dir"], f"mem_{member:03d}")
+    started = time.time()
     result = forecast(params, attempt_dir, cycle, restart_dir, member)
+    info.time("euler", started)
     with open(os.path.join(attempt_dir, "result.json"), "w") as handle:
         json.dump(result, handle, indent=1)
     print(f"member {member} cycle {cycle}: wrote {result['snapshot']}")

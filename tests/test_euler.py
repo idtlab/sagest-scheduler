@@ -83,6 +83,10 @@ class ComponentTests(unittest.TestCase):
         self.assertEqual({k: repeat[k] for k in SHOCK}, {k: first[k] for k in SHOCK})
         result = self.result(runs[0][1])
         self.assertEqual(result["step"], 5)
+        with open(os.path.join(runs[0][1], "job.json")) as handle:
+            info = json.load(handle)
+        self.assertGreater(info["cpus_usable"], 0)
+        self.assertEqual(list(info["seconds"]), ["euler", "total"])
         self.assertTrue(result["snapshot"].endswith("ShockTube_2d_000005.cgns"))
         self.assertTrue(os.path.exists(result["snapshot"]))
 
@@ -221,6 +225,13 @@ class CampaignTests(unittest.TestCase):
                 self.assertIn("Resumed from CGNS restart at step -- 5", handle.read())
             with open(os.path.join(task["dir"], "result.json")) as handle:
                 self.assertEqual(json.load(handle)["step"], 10)
+        report = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "common",
+                                                              "job_report.py"),
+                                 os.path.dirname(os.path.dirname(os.path.dirname(task["dir"])))],
+                                encoding="utf-8", stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertEqual(report.returncode, 0, report.stderr)
+        self.assertIn("c1 analysis", report.stdout)
+        self.assertRegex(report.stdout, r"c0 member_0 +1 +\S+ +success .* euler=")
 
     def test_blowup_is_a_predicted_fatal_failure(self):
         code, state = self.go(cycles=1, size=2,

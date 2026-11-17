@@ -13,6 +13,9 @@ import os
 import shutil
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from job_info import JobInfo  # noqa: E402
+
 
 def gather(manifest, attempt_dir):
     """Link each member's plot directory as forecast/mem_XXX and return the members'
@@ -49,6 +52,8 @@ def main():
     with open(os.environ["ORCH_MANIFEST"]) as handle:
         manifest = json.load(handle)
     attempt_dir = os.environ["ORCH_DIR"]
+    info = JobInfo(attempt_dir)
+    print(f"analysis cycle {manifest['cycle']}: {info.summary()}", flush=True)
     analysis_root = os.path.join(attempt_dir, "analysis")
     results, step, prefix = gather(manifest, attempt_dir)
     write_input(attempt_dir, prefix, step)
@@ -62,6 +67,7 @@ def main():
                                            f"{result['problem']}_grid_*.cgns")):
             shutil.copy2(grid, out)
 
+    info.save()
     print(f"cycle {manifest['cycle']}: identity analysis of {len(results)} members "
           f"at step {step} -> {analysis_root}")
     with open(os.path.join(attempt_dir, "next_cycle.json"), "w") as handle:
