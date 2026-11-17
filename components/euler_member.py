@@ -29,6 +29,10 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EULER_DIR = os.path.join(ROOT, "external", "euler-miniapp")
 NUMERICAL_INSTABILITY = 20
+# euler-miniapp's ParmParse copies each token into a 200-byte stack buffer without checking,
+# so a longer value (an absolute path on scratch, say) crashes it. Paths are passed relative
+# to the attempt directory to stay short.
+MAX_VALUE = 199
 
 
 def fail(message, code=1):
@@ -75,16 +79,26 @@ def main():
     settings = {str(k): str(v) for k, v in params.get("overrides", {}).items()}
     # The final step is only written if the plotting interval lands on it.
     settings.setdefault("plotting_interval", str(params["steps_per_cycle"]))
-    settings.update(plot_dir=os.path.join(attempt_dir, "plot"), number_time_steps=str(step))
+    settings.update(plot_dir="plot", number_time_steps=str(step))
     if cycle == 0 or not params.get("restart_dir"):
         settings.update({k: f"{v:.10g}" for k, v in
                          perturbed(params.get("perturb", {}), member).items()})
     else:
-        restart = os.path.join(params["restart_dir"], f"mem_{member:03d}",
-                               snapshot_name(problem, spacedim, step - params["steps_per_cycle"]))
-        if not os.path.exists(restart):
-            fail(f"restart file {restart} is missing")
-        settings["cgns_restart"] = restart
+        restart_dir = os.path.join(params["restart_dir"], f"mem_{member:03d}")
+        name = snapshot_name(problem, spacedim, step - params["steps_per_cycle"])
+        if not os.path.exists(os.path.join(restart_dir, name)):
+            fail(f"restart file {os.path.join(restart_dir, name)} is missing")
+        # A link to the directory, not the file: the snapshot finds its grid file relative
+        # to the directory it was opened from.
+        link = os.path.join(attempt_dir, "restart")
+        if os.path.islink(link):
+            os.remove(link)
+        os.symlink(restart_dir, link)
+        settings["cgns_restart"] = os.path.join("restart", name)
+
+    for key, value in settings.items():
+        if len(value) > MAX_VALUE:
+            fail(f"{key} is {len(value)} characters; euler-miniapp crashes above {MAX_VALUE}")
 
     command = [exe, input_file]
     for key, value in settings.items():
@@ -101,7 +115,7 @@ def main():
     if re.search(r"difference: -+ [-+]?(nan|inf)", output, re.IGNORECASE):
         fail("solution is not finite", NUMERICAL_INSTABILITY)
 
-    snapshot = os.path.join(settings["plot_dir"], snapshot_name(problem, spacedim, step))
+    snapshot = os.path.join(attempt_dir, "plot", snapshot_name(problem, spacedim, step))
     if not os.path.exists(snapshot):
         fail(f"expected output {snapshot} was not written")
     with open(os.path.join(attempt_dir, "result.json"), "w") as handle:

@@ -33,8 +33,8 @@ jobs:
         env:
           SAGESTGIT_TOKEN: ${{ secrets.SAGESTGIT_TOKEN }}
         run: |
-          scripts/ubuntu-runner/fetch-submodules.sh
-          scripts/ubuntu-runner/install-deps.sh
+          scripts/common/fetch-submodules.sh
+          scripts/local/install-deps.sh
 
       - name: Versions
         run: |
@@ -43,12 +43,12 @@ jobs:
 
       - uses: actions/cache@v4
         with:
-          path: build/ubuntu-runner/deps
+          path: build/local/deps
           key: deps-${{ matrix.flux }}-${{ hashFiles('scripts/common/build.sh') }}
 
       # Builds HashBrick and euler-miniapp, then runs every test in Flux, failing on skips.
       - name: Build and test
-        run: scripts/ubuntu-runner/test.sh
+        run: scripts/local/test.sh
 
   # No GPU on GitHub's runners, so this only checks that the CUDA code still compiles.
   cuda-build:
@@ -73,17 +73,17 @@ jobs:
         env:
           SAGESTGIT_TOKEN: ${{ secrets.SAGESTGIT_TOKEN }}
         run: |
-          scripts/ubuntu-runner/fetch-submodules.sh
-          scripts/ubuntu-runner/install-deps.sh
+          scripts/common/fetch-submodules.sh
+          scripts/local/install-deps.sh
           nvcc --version
 
       - uses: actions/cache@v4
         with:
-          path: build/ubuntu-runner/deps
+          path: build/local/deps
           key: deps-cuda-${{ matrix.cuda }}-${{ hashFiles('scripts/common/build.sh') }}
 
       # A100 (Perlmutter) and GH200; each rebuilds HashBrick and euler-miniapp from clean.
       - name: Build HashBrick, euler-miniapp and libMLEF for sm_80
-        run: scripts/ubuntu-runner/build.sh --cuda --cuda-arch 80
+        run: scripts/local/build.sh --cuda --cuda-arch 80
       - name: Build HashBrick, euler-miniapp and libMLEF for sm_90
-        run: scripts/ubuntu-runner/build.sh --cuda --cuda-arch 90
+        run: scripts/local/build.sh --cuda --cuda-arch 90

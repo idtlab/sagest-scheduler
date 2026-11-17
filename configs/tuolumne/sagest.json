@@ -1,6 +1,6 @@
 {
   "name": "sagest",
-  "run_dir": "../runs/sagest",
+  "run_dir": "../../runs/sagest",
   "cycles": 3,
   "poll_seconds": 60,
   "queue": "pbatch",
@@ -11,7 +11,7 @@
     "size": 16,
     "nodes": 1,
     "flux_args": ["-n4", "-c24", "-g1", "--exclusive"],
-    "command": ["python3", "{config_dir}/../examples/ensemble_member.py"],
+    "command": ["python3", "{config_dir}/../../examples/ensemble_member.py"],
     "params": {"dt": 0.01},
     "retries": 2,
     "failures": {
@@ -24,7 +24,7 @@
   "analysis": {
     "nodes": 1,
     "flux_args": ["-c24", "--exclusive"],
-    "command": ["python3", "{config_dir}/../examples/post_analysis.py"],
+    "command": ["python3", "{config_dir}/../../examples/post_analysis.py"],
     "retries": 2
   }
 }

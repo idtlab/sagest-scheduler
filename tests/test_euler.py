@@ -102,6 +102,22 @@ class ComponentTests(unittest.TestCase):
             self.assertIn("Resumed from CGNS restart at step -- 5", handle.read())
         self.assertEqual(self.result(attempt_dir)["step"], 10)
 
+    def test_restart_works_under_long_paths(self):
+        # euler-miniapp crashes on any input value over 199 characters.
+        self.tmp = os.path.join(self.tmp, *["d" * 60] * 4)
+        dirs = []
+        for member in (0, 1):
+            done, attempt_dir = self.run_member(member, 0, member_params())
+            self.assertEqual(done.returncode, 0, done.stderr)
+            dirs.append(attempt_dir)
+        done, analysis_dir = self.run_stub(0, dirs)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        restart_dir = os.path.join(analysis_dir, "analysis")
+        self.assertGreater(len(restart_dir), 250)
+        done, attempt_dir = self.run_member(0, 1, member_params(restart_dir=restart_dir))
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self.result(attempt_dir)["step"], 10)
+
     def test_stub_rejects_members_at_different_steps(self):
         done0, dir0 = self.run_member(0, 0, member_params())
         done1, dir1 = self.run_member(1, 0, member_params(steps_per_cycle=6))
@@ -123,14 +139,14 @@ class ComponentTests(unittest.TestCase):
 
 @unittest.skipUnless(BUILT and IN_FLUX, "needs the CPU build and a Flux instance")
 class CampaignTests(unittest.TestCase):
-    """The shipped ubuntu-runner config, shrunk, run through campaign.py and Flux."""
+    """The shipped local config, shrunk, run through campaign.py and Flux."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="euler-campaign-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
 
     def go(self, cycles=2, size=3, **params):
-        with open(os.path.join(ROOT, "configs", "ubuntu-runner.json")) as handle:
+        with open(os.path.join(ROOT, "configs", "local", "euler.json")) as handle:
             raw = json.load(handle)
         raw.update(run_dir="run", cycles=cycles, poll_seconds=0.2)
         raw["ensemble"]["size"] = size

@@ -3,8 +3,8 @@
 # since the Flux and euler-miniapp tests skip themselves when Flux or the build is missing.
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-"$ROOT/scripts/ubuntu-runner/build.sh"
-source "${BUILD_DIR:-$ROOT/build/ubuntu-runner}/env.sh"
+"$ROOT/scripts/local/build.sh"
+source "${BUILD_DIR:-$ROOT/build/local}/env.sh"
 log=$(mktemp)
 trap 'rm -f "$log"' EXIT
 cd "$ROOT"

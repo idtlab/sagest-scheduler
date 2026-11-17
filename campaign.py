@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Minimal wrapper over Flux: ensemble -> post-analysis -> repeat. See README.md.
+"""Minimal wrapper over Flux or Slurm: ensemble -> post-analysis -> repeat. See README.md.
 
 Runs in one of two modes, chosen by where `run` starts:
-  login       on a login node; each job goes to the queue on its own (-q, -B)
-  allocation  inside flux batch or flux alloc; jobs share the allocation's nodes
+  login       on a login node; each job goes to the queue on its own
+              (flux submit -q -B, or sbatch -q -A)
+  allocation  inside flux batch/alloc or sbatch/salloc; jobs share the allocation's nodes
+              (flux submit, or srun --exact job steps)
 `batch` sizes an allocation from the time estimates and starts `run` inside it.
-Flux schedules and launches every job. This only adds what Flux has no feature for:
-retries, reacting to failure reasons, waiting for all members across retries, and cycles.
+The scheduler launches every job. This only adds what it has no feature for: retries,
+reacting to failure reasons, waiting for all members across retries, and cycles.
 
 Usage: campaign.py run|batch CONFIG [--dry-run]  |  campaign.py status CONFIG
 Exit codes: 0 completed, 1 failed, 2 invalid config, 3 paused. Rerun the same command to resume; rerunning
@@ -17,6 +19,7 @@ import json
 import math
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -56,11 +59,11 @@ def seconds(duration):
     return float(match.group(1)) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[match.group(2)]
 
 
-def flux(*args, env=None):
-    """Run a flux command, returning (exit code, stdout, stderr)."""
+def command(args, env=None):
+    """Run a scheduler command, returning (exit code, stdout, stderr)."""
     full_env = dict(os.environ, FLUX_F58_FORCE_ASCII="1", **(env or {}))
     try:
-        done = subprocess.run(["flux"] + [str(a) for a in args], env=full_env, timeout=120,
+        done = subprocess.run([str(a) for a in args], env=full_env, timeout=120,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               encoding="utf-8", errors="replace")
     except (OSError, subprocess.SubprocessError) as exc:
@@ -68,8 +71,23 @@ def flux(*args, env=None):
     return done.returncode, done.stdout, done.stderr
 
 
-def poll(job_ids):
-    """Return {id: status}, with None for jobs Flux says it doesn't know."""
+def flux(*args, env=None):
+    return command(["flux", *args], env)
+
+
+def scheduler(cfg):
+    return cfg.get("scheduler", "flux")
+
+
+def poll(cfg, job_ids):
+    """Return {id: status}, with None for jobs the scheduler says it doesn't know."""
+    if scheduler(cfg) == "slurm":
+        steps = [j for j in job_ids if j.startswith(STEP_PREFIX)]
+        jobs = {j: poll_step(j) for j in steps}
+        batch = [j for j in job_ids if j not in jobs]
+        if batch:
+            jobs.update(poll_slurm(batch))
+        return jobs
     code, out, err = flux("jobs", "-n", "-o", JOB_FORMAT, *job_ids)
     return parse_jobs(job_ids, code, out, err)
 
@@ -96,8 +114,12 @@ def parse_jobs(job_ids, code, out, err):
     return jobs
 
 
-def timeleft():
+def timeleft(cfg):
     """Seconds left in this allocation, or None if it has no limit."""
+    if scheduler(cfg) == "slurm":
+        code, out, _ = command(["squeue", "-h", "-j", os.environ.get("SLURM_JOB_ID", ""),
+                                "-o", "%L"])
+        return parse_slurm_time(out.strip()) if code == 0 else None
     code, out, _ = flux("job", "timeleft")
     try:
         left = float(out) if code == 0 else NO_TIME_LIMIT
@@ -106,12 +128,133 @@ def timeleft():
     return None if left >= NO_TIME_LIMIT else left
 
 
-def detect_mode():
-    """'allocation' inside flux batch or alloc, 'login' outside Flux, None inside a plain job."""
+def detect_mode(cfg=None):
+    """'allocation' inside an allocation, 'login' outside one, None inside a plain job."""
+    if cfg and scheduler(cfg) == "slurm":
+        if "SLURM_JOB_ID" not in os.environ:
+            return "login"
+        # A batch script or salloc shell is the allocation itself; a numbered step is a job.
+        step = os.environ.get("SLURM_STEP_ID", "")
+        return None if step.isdigit() and int(step) < SLURM_SPECIAL_STEPS else "allocation"
     code, out, _ = flux("getattr", "instance-level")
     if code == 0 and out.strip() not in ("", "0"):
         return "allocation"
     return None if "FLUX_JOB_ID" in os.environ else "login"
+
+
+# ---- Slurm -------------------------------------------------------------------------------
+
+SLURM_FORMAT = "JobID,State,ExitCode,ElapsedRaw"
+SLURM_SPECIAL_STEPS = 4294967290  # ids from here up are batch, interactive and extern steps
+STEP_PREFIX = "step-"             # job ids of srun steps launched from allocation mode
+STEPS = {}                        # job id -> (Popen, start time, srun log) for this process
+SLURM_RESULTS = {"COMPLETED": "COMPLETED", "TIMEOUT": "TIMEOUT", "CANCELLED": "CANCELED"}
+
+
+def slurm_time(limit):
+    """Seconds as a Slurm time limit, rounded up to whole minutes (Slurm's resolution)."""
+    minutes = max(1, math.ceil(limit / 60))
+    return f"{minutes // 60}:{minutes % 60:02d}:00"
+
+
+def parse_slurm_time(text):
+    """Seconds from squeue's %L ([days-]hours:minutes:seconds), or None if unlimited."""
+    match = re.fullmatch(r"(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)", text)
+    if not match:
+        return None
+    days, hours, minutes, secs = (int(g or 0) for g in match.groups())
+    return ((days * 24 + hours) * 60 + minutes) * 60 + secs
+
+
+def parse_sacct(job_ids, out):
+    """Statuses from `sacct -n -P -X -o JobID,State,ExitCode,ElapsedRaw` output."""
+    jobs = {}
+    for line in out.splitlines():
+        fields = line.split("|")
+        if len(fields) != 4 or fields[0] not in job_ids:
+            continue
+        state = fields[1].split()[0] if fields[1].strip() else ""
+        code, _, signal = fields[2].partition(":")
+        rc = 128 + int(signal) if signal.isdigit() and int(signal) else \
+            int(code) if code.isdigit() else None
+        finished = state not in ("", "PENDING", "RUNNING", "REQUEUED", "RESIZING", "SUSPENDED",
+                                 "CONFIGURING", "COMPLETING")
+        jobs[fields[0]] = {"result": SLURM_RESULTS.get(state, state) if finished else None,
+                           "rc": rc if finished else None,
+                           "runtime": float(fields[3]) if fields[3].isdigit() else None,
+                           "note": "" if state in SLURM_RESULTS else fields[1].strip()}
+    return jobs
+
+
+def poll_slurm(job_ids):
+    code, out, err = command(["sacct", "-n", "-P", "-X", "-o", SLURM_FORMAT,
+                              "-j", ",".join(job_ids)])
+    if code != 0:
+        raise PollError(f"sacct failed (exit {code}): {err.strip()}")
+    jobs = parse_sacct(job_ids, out)
+    missing = [j for j in job_ids if j not in jobs]
+    if missing:
+        # Accounting can lag behind a fresh submit; the controller's live queue can't.
+        code, out, err = command(["squeue", "-h", "-o", "%i", "-u",
+                                  os.environ.get("USER", "")])
+        if code != 0:
+            raise PollError(f"squeue failed (exit {code}): {err.strip()}")
+        queued = set(out.split())
+        for job_id in missing:
+            jobs[job_id] = {"result": None, "rc": None, "runtime": None, "note": ""} \
+                if job_id in queued else None
+    return jobs
+
+
+def poll_step(job_id):
+    """Status of an srun step this process launched, or None if it isn't one of ours."""
+    if job_id not in STEPS:
+        return None  # launched by an earlier campaign.py, so it ended along with that one
+    proc, start, srun_log = STEPS[job_id]
+    rc = proc.poll()
+    runtime = time.time() - start
+    if rc is None:
+        return {"result": None, "rc": None, "runtime": runtime, "note": ""}
+    with open(srun_log, errors="replace") as handle:
+        messages = handle.read()
+    if "DUE TO TIME LIMIT" in messages:
+        result = "TIMEOUT"
+    elif "CANCELLED" in messages:
+        result = "CANCELED"
+    else:
+        result = "COMPLETED" if rc == 0 else "FAILED"
+    note = "" if rc == 0 else " ".join(messages.strip().splitlines()[-1:])[:200]
+    return {"result": result, "rc": rc if rc >= 0 else 128 - rc, "runtime": runtime,
+            "note": note}
+
+
+def sbatch_args(cfg, kind, job_name, attempt_dir, limit):
+    comp = cfg[kind]
+    nodes = ["-N", str(comp["nodes"])] if "nodes" in comp else []
+    return ["sbatch", "--parsable", f"--job-name={job_name}", f"--chdir={attempt_dir}",
+            f"--output={os.path.join(attempt_dir, 'stdout.log')}",
+            f"--error={os.path.join(attempt_dir, 'stderr.log')}",
+            f"--time={slurm_time(limit)}", *queue_args(cfg), *nodes,
+            *comp.get("slurm_args", []), "--wrap", shlex.join(comp["command"])]
+
+
+def srun_args(cfg, kind, job_name, attempt_dir, limit):
+    comp = cfg[kind]
+    # Without -N and --exact a step would take the whole allocation.
+    return ["srun", "--exact", "-N", str(comp.get("nodes", 1)), f"--job-name={job_name}",
+            f"--chdir={attempt_dir}", f"--output={os.path.join(attempt_dir, 'stdout.log')}",
+            f"--error={os.path.join(attempt_dir, 'stderr.log')}",
+            f"--time={slurm_time(limit)}", *comp.get("slurm_args", []), *comp["command"]]
+
+
+def start_step(args, attempt_dir, env):
+    srun_log = os.path.join(attempt_dir, "srun.log")
+    with open(srun_log, "w") as log_handle:
+        proc = subprocess.Popen(args, env=dict(os.environ, **env), stdout=log_handle,
+                                stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+    job_id = f"{STEP_PREFIX}{proc.pid}"
+    STEPS[job_id] = (proc, time.time(), srun_log)
+    return job_id
 
 
 # ---- config -----------------------------------------------------------------------------
@@ -135,24 +278,32 @@ _DURATION = (lambda v: isinstance(v, str) and re.fullmatch(r"\d+(\.\d+)?[smhd]",
              "a duration like 90s, 30m, 1.5h or 2d")
 _RUN_TIME = (lambda v: _DURATION[0](v) and seconds(v) > 0, "a duration greater than 0, like 30m")
 
+_SCHEDULER = (lambda v: v in ("flux", "slurm"), '"flux" or "slurm"')
+
 TOP = {"name": (_NAME, True), "run_dir": (_TEXT, True), "cycles": (_int(1), False),
+       "scheduler": (_SCHEDULER, False),
        "poll_seconds": (_POSITIVE, False), "queue": (_TEXT, False), "bank": (_TEXT, False),
        "time": (_OBJECT, True), "allocation": (_OBJECT, False),
        "ensemble": (_OBJECT, True), "analysis": (_OBJECT, True)}
 TIME = {"member": (_RUN_TIME, True), "analysis": (_RUN_TIME, True),
         "buffer": (_DURATION, False), "reserve": (_DURATION, False)}
 ALLOCATION = {"nodes": (_int(1), False), "time": (_RUN_TIME, False),
-              "max_time": (_RUN_TIME, False), "flux_args": (_ARGS, False)}
+              "max_time": (_RUN_TIME, False), "flux_args": (_ARGS, False),
+              "slurm_args": (_ARGS, False)}
 COMPONENT = {"command": (_COMMAND, True), "nodes": (_int(1), False), "flux_args": (_ARGS, False),
+             "slurm_args": (_ARGS, False),
              "params": (_OBJECT, False), "retries": (_int(0), False),
              "failures": (_OBJECT, False)}
 ENSEMBLE = dict(COMPONENT, size=(_int(1), True))
 RULE = {"exit_code": (_int(3, 125), False), "retries": (_int(0), True), "set": (_OBJECT, False),
         "time_scale": (_POSITIVE, False)}
 
-# Flags campaign.py sets itself, so flux_args must not repeat them.
+# Flags campaign.py sets itself, so flux_args and slurm_args must not repeat them.
 MANAGED_FLAGS = ["--job-name", "--cwd", "--output", "--error", "-t", "--time-limit",
                  "-q", "--queue", "-B", "--bank"]
+SLURM_MANAGED_FLAGS = ["-J", "--job-name", "-D", "--chdir", "-o", "--output", "-e", "--error",
+                       "-t", "--time", "-q", "--qos", "-A", "--account", "--parsable", "--wrap",
+                       "--exact"]
 
 
 def _check(obj, schema, where, errors):
@@ -191,14 +342,18 @@ def validate(cfg):
     alloc = _check(top.get("allocation", {}), ALLOCATION, "allocation", errors)
     _check_flags(alloc.get("flux_args", []), MANAGED_FLAGS + ["-N", "--nodes", "--exclusive"],
                  "allocation.flux_args", errors)
+    _check_flags(alloc.get("slurm_args", []), SLURM_MANAGED_FLAGS + ["-N", "--nodes"],
+                 "allocation.slurm_args", errors)
     if "time" in alloc and "max_time" in alloc:
         errors.append("allocation: set time or max_time, not both")
     for name, schema in (("ensemble", ENSEMBLE), ("analysis", COMPONENT)):
         if name not in top:
             continue
         comp = _check(top[name], schema, name, errors)
-        flags = MANAGED_FLAGS + (["-N", "--nodes"] if "nodes" in comp else [])
-        _check_flags(comp.get("flux_args", []), flags, f"{name}.flux_args", errors)
+        nodes = ["-N", "--nodes"] if "nodes" in comp else []
+        _check_flags(comp.get("flux_args", []), MANAGED_FLAGS + nodes, f"{name}.flux_args", errors)
+        _check_flags(comp.get("slurm_args", []), SLURM_MANAGED_FLAGS + nodes,
+                     f"{name}.slurm_args", errors)
         codes = {}
         for reason, rule in comp.get("failures", {}).items():
             where = f"{name}.failures.{reason}"
@@ -289,7 +444,8 @@ def new_cycle(cfg, state):
 # ---- one job ----------------------------------------------------------------------------
 
 def queue_args(cfg):
-    return [arg for flag, key in (("-q", "queue"), ("-B", "bank")) if cfg.get(key)
+    bank = "-A" if scheduler(cfg) == "slurm" else "-B"
+    return [arg for flag, key in (("-q", "queue"), (bank, "bank")) if cfg.get(key)
             for arg in (flag, cfg[key])]
 
 
@@ -320,8 +476,22 @@ def submit(cfg, mode, state, task):
     else:
         env["ORCH_MANIFEST"] = os.path.join(cfg["run_dir"], f"cycle_{cycle}", "manifest.json")
     job_name = f"{cfg['name']}-c{cycle}-{task['name']}-a{task['attempt']}"
-    code, out, err = flux(*submit_args(cfg, mode, task["kind"], job_name, attempt_dir,
-                                       task["time"]), env=env)
+    if scheduler(cfg) == "slurm" and mode == "allocation":
+        try:
+            job_id = start_step(srun_args(cfg, task["kind"], job_name, attempt_dir,
+                                          task["time"]), attempt_dir, env)
+        except OSError as exc:
+            finish(cfg, task, {"result": "SUBMIT_FAILED", "rc": None, "runtime": None,
+                               "note": str(exc)})
+            return
+        code, out, err = 0, job_id, ""
+    elif scheduler(cfg) == "slurm":
+        code, out, err = command(sbatch_args(cfg, task["kind"], job_name, attempt_dir,
+                                             task["time"]), env=env)
+        out = out.split(";")[0]  # --parsable prints "id;cluster" on multi-cluster systems
+    else:
+        code, out, err = flux(*submit_args(cfg, mode, task["kind"], job_name, attempt_dir,
+                                           task["time"]), env=env)
     if code != 0 and LIFETIME_ERROR in err:
         # The allocation's time ran down since the check; not the job's fault, so no retry used.
         task["status"] = "PENDING"
@@ -349,7 +519,7 @@ def read_json(path):
 def classify(comp, job):
     """Return (kind, reason). Flux's job result and exit code decide everything."""
     if job is None:
-        return "lost", "unknown to Flux"
+        return "lost", "unknown to the scheduler"
     if job["result"] == "CANCELED":
         return "canceled", "CANCELED"
     failures = comp.get("failures", {})
@@ -412,7 +582,7 @@ def drive(cfg, mode, state, tasks):
     poll_failures = 0
     while True:
         pending = [t for t in tasks if t["status"] == "PENDING"]
-        left = timeleft() if pending and mode == "allocation" else None
+        left = timeleft(cfg) if pending and mode == "allocation" else None
         ready = [t for t in pending if left is None or t["time"] <= left]
         for task in ready:
             task["attempt"] += 1  # saved first, so a crash mid-submit can't reuse a directory
@@ -425,7 +595,7 @@ def drive(cfg, mode, state, tasks):
             try:
                 jobs = {}
                 for start in range(0, len(running), 500):
-                    jobs.update(poll([t["job"] for t in running[start:start + 500]]))
+                    jobs.update(poll(cfg, [t["job"] for t in running[start:start + 500]]))
                 poll_failures = 0
             except PollError as exc:
                 poll_failures += 1
@@ -523,7 +693,15 @@ def run(cfg, mode="login"):
 # ---- commands ---------------------------------------------------------------------------
 
 def batch_args(cfg):
+    """The flux batch (without the leading "flux") or sbatch command for `batch`."""
     times = plan(cfg)
+    if scheduler(cfg) == "slurm":
+        return ["sbatch", "--parsable", "-N", str(times["nodes"]),
+                f"--time={slurm_time(times['request'])}", f"--job-name={cfg['name']}",
+                *queue_args(cfg), "--output=" + os.path.join(cfg["run_dir"], "driver-%j.out"),
+                *cfg.get("allocation", {}).get("slurm_args", []),
+                "--wrap", shlex.join([sys.executable, os.path.abspath(__file__), "run",
+                                      cfg["config_path"]])]
     return ["batch", "-N", str(times["nodes"]), "-t", f"{math.ceil(times['request'])}s",
             "--exclusive", f"--job-name={cfg['name']}", *queue_args(cfg),
             "--output=" + os.path.join(cfg["run_dir"], "driver-{{id}}.out"),
@@ -536,15 +714,20 @@ def dry_run(cfg):
     for mode in ("login", "allocation"):
         print(f"\n{mode} mode, example job commands:")
         for kind, name in (("ensemble", "member_0"), ("analysis", "analysis")):
-            args = submit_args(cfg, mode, kind, f"{cfg['name']}-c0-{name}-a1", "<attempt dir>",
-                               time_limit(cfg, kind))
-            print("  flux " + " ".join(args))
+            job = (cfg, kind, f"{cfg['name']}-c0-{name}-a1", "<attempt dir>",
+                   time_limit(cfg, kind))
+            if scheduler(cfg) == "slurm":
+                args = srun_args(*job) if mode == "allocation" else sbatch_args(*job)
+            else:
+                args = ["flux", *submit_args(job[0], mode, *job[1:])]
+            print("  " + shlex.join(args))
     times = plan(cfg)
     print(f"\nbatch: {times['waves']} wave(s) per cycle, campaign {times['total'] / 60:.1f}m, "
           f"requesting {times['nodes']} node(s) for {times['request'] / 60:.1f}m")
     if times["request"] < times["total"]:
         print("  note: shorter than the plan, so expect to resume in another allocation")
-    print("  flux " + " ".join(batch_args(cfg)))
+    args = batch_args(cfg)
+    print("  " + shlex.join(args if scheduler(cfg) == "slurm" else ["flux", *args]))
     return 0
 
 
@@ -588,17 +771,18 @@ def main():
         return status(cfg)
     if args.dry_run:
         return dry_run(cfg)
-    mode = detect_mode()
+    mode = detect_mode(cfg)
     if mode is None:
-        sys.exit("error: start campaign.py on a login node or inside flux batch or flux alloc, "
-                 "not inside a single job")
+        sys.exit("error: start campaign.py on a login node or inside an allocation "
+                 "(flux batch/alloc, sbatch/salloc), not inside a single job")
     if mode == "login" and cfg.get("bank") == "YOUR_BANK":
         config_error("config error: set bank in the config")
     if args.command == "batch":
         if mode != "login":
             sys.exit("error: run batch from a login node")
         os.makedirs(cfg["run_dir"], exist_ok=True)
-        code, out, err = flux(*batch_args(cfg))
+        args = batch_args(cfg)
+        code, out, err = command(args if scheduler(cfg) == "slurm" else ["flux", *args])
         print(out.strip() or err.strip())
         return code
     return run(cfg, mode)

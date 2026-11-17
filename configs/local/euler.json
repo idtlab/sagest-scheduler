@@ -1,12 +1,12 @@
 {
   "name": "euler-shocktube",
-  "run_dir": "../runs/ubuntu-runner",
+  "run_dir": "../../runs/local",
   "cycles": 3,
   "poll_seconds": 1,
   "time": {"member": "1m", "analysis": "1m", "buffer": "1m"},
   "ensemble": {
     "size": 4,
-    "command": ["python3", "{config_dir}/../components/euler_member.py"],
+    "command": ["python3", "{config_dir}/../../components/euler_member.py"],
     "params": {
       "steps_per_cycle": 10,
       "overrides": {"number_cells": "31 31"},
@@ -20,7 +20,7 @@
     }
   },
   "analysis": {
-    "command": ["python3", "{config_dir}/../components/mlef_stub.py"],
+    "command": ["python3", "{config_dir}/../../components/mlef_stub.py"],
     "retries": 1
   }
 }

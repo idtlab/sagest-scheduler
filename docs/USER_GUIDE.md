@@ -34,16 +34,16 @@ You need Python 3 (tested with 3.12 and 3.14) and the `flux` command; nothing el
 ```bash
 git clone https://github.com/TheAssembler1/sagest-integration.git
 cd sagest-integration
-cp configs/smoke.json configs/mine.json        # then edit: set "bank", commands, sizes
-./campaign.py run configs/mine.json --dry-run  # check the exact flux commands it will use
-./campaign.py run configs/mine.json            # run on a login node (inside tmux)
-./campaign.py status configs/mine.json         # check progress from any shell
+cp configs/tuolumne/smoke.json configs/tuolumne/mine.json   # then edit: set "bank", commands, sizes
+./campaign.py run configs/tuolumne/mine.json --dry-run  # check the exact flux commands it will use
+./campaign.py run configs/tuolumne/mine.json            # run on a login node (inside tmux)
+./campaign.py status configs/tuolumne/mine.json         # check progress from any shell
 ```
 
 To run inside one allocation instead, use `batch` in place of `run`:
 
 ```bash
-./campaign.py batch configs/mine.json
+./campaign.py batch configs/tuolumne/mine.json
 ```
 
 ---
@@ -157,7 +157,7 @@ allocation mode, example job commands:
   flux submit --job-name=smoke-c0-analysis-a1 --cwd=<attempt dir> --output=stdout.log --error=stderr.log -t 120s python3 /…/examples/post_analysis.py
 
 batch: 2 wave(s) per cycle, campaign 14.0m, requesting 2 node(s) for 14.0m
-  flux batch -N 2 -t 840s --exclusive --job-name=smoke -q pbatch -B mybank --output=/…/runs/smoke/driver-{{id}}.out --wrap /usr/bin/python3 /…/campaign.py run /…/configs/smoke.json
+  flux batch -N 2 -t 840s --exclusive --job-name=smoke -q pbatch -B mybank --output=/…/runs/smoke/driver-{{id}}.out --wrap /usr/bin/python3 /…/campaign.py run /…/configs/tuolumne/smoke.json
 ```
 
 Always do a dry run after editing a config.
@@ -189,12 +189,12 @@ If the campaign hasn't started, it prints `not started`.
 ## 5. Config reference
 
 A config is one JSON file. Paths in it are relative to the config file's folder. A full example
-is `configs/tuolumne.json`:
+is `configs/tuolumne/sagest.json`:
 
 ```json
 {
   "name": "sagest",
-  "run_dir": "../runs/sagest",
+  "run_dir": "../../runs/sagest",
   "cycles": 3,
   "poll_seconds": 60,
   "queue": "pbatch",
@@ -205,7 +205,7 @@ is `configs/tuolumne.json`:
     "size": 16,
     "nodes": 1,
     "flux_args": ["-n4", "-c24", "-g1", "--exclusive"],
-    "command": ["python3", "{config_dir}/../examples/ensemble_member.py"],
+    "command": ["python3", "{config_dir}/../../examples/ensemble_member.py"],
     "params": {"dt": 0.01},
     "retries": 2,
     "failures": {
@@ -218,7 +218,7 @@ is `configs/tuolumne.json`:
   "analysis": {
     "nodes": 1,
     "flux_args": ["-c24", "--exclusive"],
-    "command": ["python3", "{config_dir}/../examples/post_analysis.py"],
+    "command": ["python3", "{config_dir}/../../examples/post_analysis.py"],
     "retries": 2
   }
 }
@@ -231,9 +231,10 @@ is `configs/tuolumne.json`:
 | `name` | yes | | Campaign name. Used in every job name and as the allocation's job name |
 | `run_dir` | yes | | Folder for all state and output, relative to the config file. Use a file system the compute nodes can see. One campaign per folder |
 | `cycles` | no | `1` | How many ensemble + analysis rounds to run. The analysis can stop earlier |
-| `poll_seconds` | no | `60` | How often to ask Flux for job states. Retries are submitted on the next poll |
-| `queue` | no | none | Flux queue (`-q`). Login mode: on every job. Allocation mode: on the allocation only |
-| `bank` | no | none | Flux bank (`-B`). Same rules as `queue`. The placeholder `YOUR_BANK` is refused in login mode |
+| `scheduler` | no | `"flux"` | `"flux"` or `"slurm"`; see "Slurm" below |
+| `poll_seconds` | no | `60` | How often to ask the scheduler for job states. Retries are submitted on the next poll |
+| `queue` | no | none | Flux queue or Slurm QOS (`-q`). Login mode: on every job. Allocation mode: on the allocation only |
+| `bank` | no | none | Flux bank (`-B`) or Slurm account (`-A`). Same rules as `queue`. The placeholder `YOUR_BANK` is refused in login mode |
 | `time` | yes | | Runtime estimates; see below |
 | `allocation` | no | `{}` | Allocation settings for `batch`; see below |
 | `ensemble` | yes | | The member jobs; see below |
@@ -259,6 +260,7 @@ number without a unit is an error.
 | `time` | calculated (section 6) | Allocation length. If set, used exactly as given |
 | `max_time` | none | Upper limit on the calculated length. Ignored if `time` is set |
 | `flux_args` | `[]` | Extra arguments for `flux batch` |
+| `slurm_args` | `[]` | Extra arguments for `sbatch`, e.g. `["-C", "cpu"]` |
 
 ### `ensemble` and `analysis`
 
@@ -270,9 +272,30 @@ Both take the same keys, except `size`, which only `ensemble` has.
 | `command` | yes | | The program to run, as a list, e.g. `["python3", "run.py"]`. `{config_dir}` is replaced by the config file's folder |
 | `nodes` | no | not passed | Nodes per job, passed as `-N`. Also used by `batch` to size the allocation, where missing counts as 1 |
 | `flux_args` | no | `[]` | Extra arguments for `flux submit`, passed unchanged, e.g. `["-n4", "-c24", "-g1", "--exclusive"]` |
+| `slurm_args` | no | `[]` | Extra arguments for `sbatch` (login mode) or `srun` (allocation mode), e.g. `["-C", "cpu", "-c", "2"]` |
 | `params` | no | `{}` | Parameters written to each job's `params.json` |
 | `retries` | no | `0` | Retries allowed for unpredicted failures, per member per cycle |
 | `failures` | no | `{}` | Named predicted failures; see section 7 |
+
+### Slurm
+
+With `"scheduler": "slurm"` the same config runs under Slurm (see `configs/perlmutter/`):
+
+| | Login mode | Allocation mode |
+|---|---|---|
+| Each job | `sbatch --parsable ... --wrap COMMAND`, with `-q queue -A bank` | `srun --exact -N nodes ... COMMAND`, started by `campaign.py` inside the allocation |
+| Job states | `sacct`; `squeue` for jobs accounting hasn't recorded yet | The `srun` process's exit, plus its messages in the attempt's `srun.log` for timeouts and cancellations |
+| Time left | not checked | `squeue -j $SLURM_JOB_ID -o %L` |
+| `batch` | | `sbatch -N nodes --time ... --wrap "campaign.py run CONFIG"` |
+
+Mode detection: outside a Slurm job is login mode; inside a batch script or `salloc` shell is
+allocation mode; inside a numbered step `run` refuses to start. Time limits are rounded up to
+whole minutes. Without `--exact`, a step would take the whole allocation, so `campaign.py` always
+passes it, and `-N 1` unless `nodes` is set. If steps should share a node, give them a memory
+request in `slurm_args` (e.g. `--mem-per-cpu=1G`); otherwise a step may claim the node's memory.
+
+Steps die with the `campaign.py` that started them, so a resumed allocation-mode campaign
+treats steps from before as lost and resubmits them without using a retry.
 
 ### Validation
 
@@ -675,7 +698,7 @@ them; retried members live in `attempt_2` or later.
 **A batch campaign paused early.** Each job must fit in the time left. Add `time.reserve`, raise
 `allocation.max_time`, or set `allocation.time`, then rerun `batch`.
 
-**A resumed campaign submitted a member again.** Its old job was unknown to Flux, usually
+**A resumed campaign submitted a member again.** Its old job was unknown to the scheduler, usually
 because its allocation ended. This uses no retry. Lost jobs are detected from Flux's wording
 `JobID <id> unknown`. Check it on your system with `flux jobs -n -o '{id}' f111111`. If it's
 worded differently, campaigns pause instead of resubmitting; fix the pattern in `parse_jobs` in

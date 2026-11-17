@@ -179,5 +179,8 @@ export CGNS_DIR=$CGNS_DIR
 export EULER_EXE=$EULER/main_gpu
 export EULER_SPACEDIM=$SPACEDIM
 export MLEF_EXE=$LIBMLEF/mlef
+# So that \`make -C external/libMLEF run\` reuses this build.
+export CXX=${CXX:-g++} NVCC=$CUDA_HOME/bin/nvcc NVCCARCH=sm_$CUDA_ARCH
+export CUDA_HOME=$CUDA_HOME MATH_LIBS_HOME=${MATH_LIBS_HOME:-$CUDA_HOME}
 ENV
 step "done: $EULER/main_gpu and $LIBMLEF/mlef (spacedim $SPACEDIM, sm_$CUDA_ARCH); paths in $BUILD_DIR/env-cuda.sh"

@@ -1,0 +1,69 @@
+{
+  "name": "euler-allocation",
+  "run_dir": "../../runs/perlmutter-allocation",
+  "scheduler": "slurm",
+  "cycles": 2,
+  "poll_seconds": 5,
+  "queue": "debug",
+  "bank": "YOUR_BANK",
+  "time": {
+    "member": "2m",
+    "analysis": "1m",
+    "buffer": "1m"
+  },
+  "allocation": {
+    "nodes": 1,
+    "time": "20m",
+    "slurm_args": [
+      "-C",
+      "cpu"
+    ]
+  },
+  "ensemble": {
+    "size": 4,
+    "slurm_args": [
+      "-c",
+      "2",
+      "--mem-per-cpu=1G"
+    ],
+    "command": [
+      "python3",
+      "{config_dir}/../../components/euler_member.py"
+    ],
+    "params": {
+      "steps_per_cycle": 20,
+      "overrides": {
+        "number_cells": "63 63"
+      },
+      "perturb": {
+        "sigma": 0.05,
+        "seed_base": 1,
+        "keys": {
+          "SHOCK.pressureLow": 10000,
+          "SHOCK.pressureHigh": 100000,
+          "SHOCK.densityLow": 0.125,
+          "SHOCK.densityHigh": 1.0
+        }
+      }
+    },
+    "retries": 1,
+    "failures": {
+      "NUMERICAL_INSTABILITY": {
+        "exit_code": 20,
+        "retries": 0
+      }
+    }
+  },
+  "analysis": {
+    "slurm_args": [
+      "-c",
+      "1",
+      "--mem-per-cpu=1G"
+    ],
+    "command": [
+      "python3",
+      "{config_dir}/../../components/mlef_stub.py"
+    ],
+    "retries": 1
+  }
+}

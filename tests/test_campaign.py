@@ -126,7 +126,8 @@ class ValidationTests(unittest.TestCase):
 
     def test_valid_and_shipped_configs_pass(self):
         self.assertEqual(campaign.validate(self.base()), [])
-        for name in ("tuolumne.json", "smoke.json", "ubuntu-runner.json"):
+        for name in ("tuolumne/sagest.json", "tuolumne/smoke.json", "local/euler.json",
+                     "perlmutter/euler-login.json", "perlmutter/euler-allocation.json"):
             with open(os.path.join(ROOT, "configs", name)) as handle:
                 self.assertEqual(campaign.validate(json.load(handle)), [], name)
 
@@ -401,7 +402,7 @@ class CampaignTests(unittest.TestCase):
         real_poll = campaign.poll
         self.addCleanup(setattr, campaign, "poll", real_poll)
 
-        def driver_dies(_job_ids):
+        def driver_dies(_cfg, _job_ids):
             raise KeyboardInterrupt
         campaign.poll = driver_dies
         with self.assertRaises(KeyboardInterrupt):
@@ -419,18 +420,18 @@ class CampaignTests(unittest.TestCase):
         self.config(size=1)
         real_timeleft = campaign.timeleft
         self.addCleanup(setattr, campaign, "timeleft", real_timeleft)
-        campaign.timeleft = lambda: 59
+        campaign.timeleft = lambda _cfg: 59
         code, state = self.go(mode="allocation")
         self.assertEqual(code, 3)
         self.assertEqual(state["cycles"][0]["members"][0]["attempt"], 0)
-        campaign.timeleft = lambda: 1000
+        campaign.timeleft = lambda _cfg: 1000
         self.assertEqual(self.go(mode="allocation")[0], 0)
 
     def test_login_mode_never_checks_time_left(self):
         self.config(size=1)
         real_timeleft = campaign.timeleft
         self.addCleanup(setattr, campaign, "timeleft", real_timeleft)
-        campaign.timeleft = lambda: 1
+        campaign.timeleft = lambda _cfg: 1
         self.assertEqual(self.go(mode="login")[0], 0)
 
     def test_lifetime_rejection_uses_no_retry(self):
