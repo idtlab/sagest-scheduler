@@ -49,5 +49,5 @@ result=0
     echo
     python3 "$ROOT/scripts/common/check_euler_run.py" "$run_dir"
 } 2>&1 | tee "$run_dir/report.txt" || result=$?
-"$ROOT/scripts/perlmutter/save-results.sh" "$run_dir"
+"$ROOT/scripts/common/save-results.sh" perlmutter "$run_dir"
 exit $result

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Print one line per job attempt in a campaign: how it ended, where it ran (from the job.json
-the components write) and how long each phase took. For Slurm runs, then print sacct's view
-of the same jobs: nodes, allocated resources, memory high-water mark and elapsed time.
+the components write) and how long each phase took. Then print the scheduler's view of the
+same jobs: sacct's nodes, allocated resources, memory high-water mark and elapsed time, or
+flux jobs' nodes, cores and runtime. Jobs inside a Flux allocation ended with it, so
+only the allocation itself is shown for those.
 
 Usage: job_report.py RUN_DIR
 """
@@ -12,6 +14,8 @@ import re
 import subprocess
 import sys
 
+FLUX_FORMAT = ("{id.f58:>12} {name:<36.36} {queue:<8} {nnodes:>6} {nodelist:<20} {ncores:>6} "
+               "{runtime!H:>10} {status:<10} {returncode:>4}")
 SACCT_FORMAT = ("JobID%-16,JobName%-36,QOS,Account,NNodes,NodeList%-16,AllocCPUS,AllocTRES%-44,"
                 "MaxRSS,Elapsed,State,ExitCode")
 
@@ -36,7 +40,7 @@ def main():
         for task in tasks:
             for entry in task["history"]:
                 job = str(entry.get("job") or "")
-                if job.isdigit():
+                if task.get("mode") == "login" or job.isdigit():
                     job_ids.append(job)
                 attempt_dir = os.path.join(os.path.dirname(task["dir"]),
                                            f"attempt_{entry['attempt']}")
@@ -60,15 +64,21 @@ def main():
     if accounts:
         print(f"\naccounts used: {', '.join(sorted(accounts))}")
 
-    # Allocation-mode runs record step ids of their own; Slurm knows them under the
-    # allocation, whose id is in the driver log's name.
-    job_ids += [re.sub(r"\D", "", os.path.basename(path))
+    # Allocation-mode runs record ids the outer scheduler doesn't know (Slurm steps of their
+    # own, or jobs of the allocation's Flux instance); the allocation's id is in the driver
+    # log's name, and sacct lists its steps.
+    job_ids += [re.fullmatch(r"driver-(.+)\.out", os.path.basename(path)).group(1)
                 for path in glob.glob(os.path.join(run_dir, "driver-*.out"))]
-    job_ids = [j for j in dict.fromkeys(job_ids) if j]
-    if job_ids and any(info.get("scheduler") == "slurm" for info in infos) and _has("sacct"):
+    job_ids = [j for j in dict.fromkeys(job_ids) if j and not j.startswith("step-")]
+    schedulers = {info.get("scheduler") for info in infos}
+    if job_ids and "slurm" in schedulers and _has("sacct"):
         print("\nsacct:")
         sys.stdout.flush()
         subprocess.run(["sacct", "-j", ",".join(job_ids), "-o", SACCT_FORMAT])
+    elif job_ids and "flux" in schedulers and _has("flux"):
+        print("\nflux jobs:")
+        sys.stdout.flush()
+        subprocess.run(["flux", "jobs", "-o", FLUX_FORMAT, *job_ids])
 
 
 def _has(name):

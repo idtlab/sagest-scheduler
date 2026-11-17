@@ -187,22 +187,32 @@ phase took, and `sacct`'s accounting for the same jobs.
 
 ### Tuolumne
 
-Set `bank` in `configs/tuolumne/smoke.json`, then from a login node:
+Tuolumne's GPUs are AMD MI300As, which `mlef` (CUDA) can't use, so its tests run CPU members
+with the MLEF stub. From a login node, first check what login mode relies on:
 
 ```bash
 flux getattr instance-level        # must print 0 for login mode
 flux jobs -n -o '{id}' f111111     # must print: JobID f111111 unknown
-./campaign.py run configs/tuolumne/smoke.json        # login mode
-./campaign.py status configs/tuolumne/smoke.json
 ```
 
-Use a fresh `run_dir` to try allocation mode with `batch`. Lost jobs are detected from the
-"unknown" wording; if yours differs, a campaign with a lost job pauses instead of resubmitting,
-so fix the pattern in `parse_jobs`.
+Lost jobs are detected from that "unknown" wording; if yours differs, a campaign with a lost job
+pauses instead of resubmitting, so fix the pattern in `parse_jobs`. Then:
 
-`configs/tuolumne/smoke.json` uses `pbatch` because LC's Tuolumne page prohibits batch jobs and
-job chaining in `pdebug`. Check LC's current rules on job counts and long-running login-node
-processes before a large campaign.
+```bash
+scripts/tuolumne/test.sh BANK              # unit tests in a 30-minute pdebug allocation
+scripts/tuolumne/test-login.sh BANK        # in tmux: one flux job per member, pbatch
+scripts/tuolumne/test-allocation.sh BANK   # one pbatch node, all jobs inside its Flux instance
+```
+
+They work like the Perlmutter tests: run directories go under `/p/lustre*/$USER/sagest-tests`
+(or `$SAGEST_TEST_ROOT`), and results are saved to `tuolumne-results/`. `scripts/tuolumne/env.sh`
+loads the `gcc-native`, `cmake` and `python` modules where they exist; set `SAGEST_MODULES` to
+load others. `campaign.py` needs Python 3.8 or newer.
+
+The tests use `pbatch` because LC's Tuolumne page prohibits batch jobs and job chaining in
+`pdebug`. Each login-mode job takes a whole node there. Check LC's current rules on job counts
+and long-running login-node processes before a large campaign. `configs/tuolumne/smoke.json`
+runs the example components instead of euler-miniapp.
 
 ## Limitations
 
@@ -214,4 +224,5 @@ processes before a large campaign.
 - If `campaign.py` dies in the moment between a submit and recording the job ID, that job keeps
   running untracked, and its member is submitted again in a new directory.
 - Slurm login mode has run on Perlmutter, with both the stub and the real `mlef`
-  (`perlmutter-results/`). Allocation mode has only run against `tests/fake_slurm`.
+  (`perlmutter-results/`). Allocation mode has only run against `tests/fake_slurm`. The
+  Tuolumne scripts have only run in a local Flux instance.

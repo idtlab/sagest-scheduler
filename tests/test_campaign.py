@@ -1,4 +1,5 @@
 """Run inside Flux: flux start --test-size=2 python3 -m unittest discover -s tests"""
+import glob
 import json
 import os
 import shutil
@@ -126,9 +127,10 @@ class ValidationTests(unittest.TestCase):
 
     def test_valid_and_shipped_configs_pass(self):
         self.assertEqual(campaign.validate(self.base()), [])
-        for name in ("tuolumne/sagest.json", "tuolumne/smoke.json", "local/euler.json",
-                     "perlmutter/euler-login.json", "perlmutter/euler-allocation.json"):
-            with open(os.path.join(ROOT, "configs", name)) as handle:
+        names = glob.glob(os.path.join(ROOT, "configs", "*", "*.json"))
+        self.assertGreaterEqual(len(names), 7)
+        for name in names:
+            with open(name) as handle:
                 self.assertEqual(campaign.validate(json.load(handle)), [], name)
 
     def test_unknown_keys_at_every_level(self):
