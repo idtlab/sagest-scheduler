@@ -182,9 +182,10 @@ if (( MLEF )); then
     # its source or the settings change.
     mlef_make=(CXX="${CXX:-g++}" NVCC="$CUDA_HOME/bin/nvcc" NVCCARCH="sm_$CUDA_ARCH"
                CUDA_HOME="$CUDA_HOME" MATH_LIBS_HOME="$MATH_LIBS_HOME" CGNS_DIR="$CGNS_DIR")
-    # Run without the toolkit's module loaded, as on compute nodes started from a bare shell.
+    # The HPC SDK keeps cuBLAS with cuSOLVER in math_libs, which libMLEF's makefile only
+    # searches for cuSOLVER. The rpath lets mlef run without the toolkit's module loaded.
     rpath="-Xlinker -rpath=$CUDA_HOME/lib64:$MATH_LIBS_HOME/lib64:$CGNS_DIR/lib"
-    mlef_make+=(CUDA_LIB="-L$CUDA_HOME/lib64 -lcudart -lcublas $rpath")
+    mlef_make+=(CUDA_LIB="-L$CUDA_HOME/lib64 -L$MATH_LIBS_HOME/lib64 -lcudart -lcublas $rpath")
     mlef_stamp=$(git -C "$LIBMLEF" rev-parse --absolute-git-dir 2>/dev/null || echo "$LIBMLEF/o")/sagest-build
     mlef_config="$(git -C "$LIBMLEF" rev-parse HEAD 2>/dev/null) $(git -C "$LIBMLEF" status --porcelain --untracked-files=no 2>/dev/null | md5sum) ${mlef_make[*]}"
     if (( CLEAN )) || [[ ! -x $LIBMLEF/mlef || "$(cat "$mlef_stamp" 2>/dev/null)" != "$mlef_config" ]]; then
