@@ -60,12 +60,9 @@ def perturbed(perturb, member):
             for key, base in sorted(perturb.get("keys", {}).items())}
 
 
-def main():
-    with open(os.environ["ORCH_PARAMS"]) as handle:
-        params = json.load(handle)
-    attempt_dir = os.environ["ORCH_DIR"]
-    member, cycle = int(os.environ["ORCH_MEMBER_ID"]), int(os.environ["ORCH_CYCLE"])
-
+def forecast(params, workdir, cycle, restart_dir=None, member=None):
+    """Run euler-miniapp in workdir to the end of cycle and return its result. Without
+    restart_dir it starts from the initial conditions, perturbed for member if given."""
     exe = params.get("exe") or os.environ.get("EULER_EXE") or os.path.join(EULER_DIR, "main_cpu")
     input_file = params.get("input") or os.path.join(EULER_DIR, "inputFiles", "ShockTube.input")
     spacedim = int(params.get("spacedim") or os.environ.get("EULER_SPACEDIM") or 2)
@@ -80,17 +77,17 @@ def main():
     # The final step is only written if the plotting interval lands on it.
     settings.setdefault("plotting_interval", str(params["steps_per_cycle"]))
     settings.update(plot_dir="plot", number_time_steps=str(step))
-    if cycle == 0 or not params.get("restart_dir"):
-        settings.update({k: f"{v:.10g}" for k, v in
-                         perturbed(params.get("perturb", {}), member).items()})
+    if restart_dir is None:
+        if member is not None:
+            settings.update({k: f"{v:.10g}" for k, v in
+                             perturbed(params.get("perturb", {}), member).items()})
     else:
-        restart_dir = os.path.join(params["restart_dir"], f"mem_{member:03d}")
         name = snapshot_name(problem, spacedim, step - params["steps_per_cycle"])
         if not os.path.exists(os.path.join(restart_dir, name)):
             fail(f"restart file {os.path.join(restart_dir, name)} is missing")
         # A link to the directory, not the file: the snapshot finds its grid file relative
         # to the directory it was opened from.
-        link = os.path.join(attempt_dir, "restart")
+        link = os.path.join(workdir, "restart")
         if os.path.islink(link):
             os.remove(link)
         os.symlink(restart_dir, link)
@@ -104,9 +101,10 @@ def main():
     for key, value in settings.items():
         command += [key, "=", *value.split()]
     print("running:", " ".join(command), flush=True)
-    with open(os.path.join(attempt_dir, "euler.log"), "w") as log:
-        done = subprocess.run(command, cwd=attempt_dir, stdout=log, stderr=subprocess.STDOUT)
-    with open(os.path.join(attempt_dir, "euler.log")) as log:
+    log_path = os.path.join(workdir, "euler.log")
+    with open(log_path, "w") as log:
+        done = subprocess.run(command, cwd=workdir, stdout=log, stderr=subprocess.STDOUT)
+    with open(log_path) as log:
         output = log.read()
     if done.returncode != 0:
         print(output[-3000:], file=sys.stderr)
@@ -115,13 +113,25 @@ def main():
     if re.search(r"difference: -+ [-+]?(nan|inf)", output, re.IGNORECASE):
         fail("solution is not finite", NUMERICAL_INSTABILITY)
 
-    snapshot = os.path.join(attempt_dir, "plot", snapshot_name(problem, spacedim, step))
+    snapshot = os.path.join(workdir, "plot", snapshot_name(problem, spacedim, step))
     if not os.path.exists(snapshot):
         fail(f"expected output {snapshot} was not written")
+    return {"step": step, "problem": problem, "spacedim": spacedim, "snapshot": snapshot,
+            "initial": settings}
+
+
+def main():
+    with open(os.environ["ORCH_PARAMS"]) as handle:
+        params = json.load(handle)
+    attempt_dir = os.environ["ORCH_DIR"]
+    member, cycle = int(os.environ["ORCH_MEMBER_ID"]), int(os.environ["ORCH_CYCLE"])
+    restart_dir = None
+    if cycle > 0 and params.get("restart_dir"):
+        restart_dir = os.path.join(params["restart_dir"], f"mem_{member:03d}")
+    result = forecast(params, attempt_dir, cycle, restart_dir, member)
     with open(os.path.join(attempt_dir, "result.json"), "w") as handle:
-        json.dump({"step": step, "problem": problem, "spacedim": spacedim,
-                   "snapshot": snapshot, "initial": settings}, handle, indent=1)
-    print(f"member {member} cycle {cycle}: wrote {snapshot}")
+        json.dump(result, handle, indent=1)
+    print(f"member {member} cycle {cycle}: wrote {result['snapshot']}")
 
 
 if __name__ == "__main__":

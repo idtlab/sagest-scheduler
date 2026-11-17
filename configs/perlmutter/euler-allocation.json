@@ -5,18 +5,18 @@
   "cycles": 2,
   "poll_seconds": 5,
   "queue": "debug",
-  "bank": "YOUR_BANK",
+  "bank": "YOUR_BANK_g",
   "time": {
     "member": "2m",
-    "analysis": "1m",
+    "analysis": "3m",
     "buffer": "1m"
   },
   "allocation": {
     "nodes": 1,
-    "time": "20m",
+    "time": "25m",
     "slurm_args": [
       "-C",
-      "cpu"
+      "gpu"
     ]
   },
   "ensemble": {
@@ -56,13 +56,14 @@
   },
   "analysis": {
     "slurm_args": [
+      "--gpus=1",
       "-c",
-      "1",
+      "8",
       "--mem-per-cpu=1G"
     ],
     "command": [
       "python3",
-      "{config_dir}/../../components/mlef_stub.py"
+      "{config_dir}/../../components/mlef_analysis.py"
     ],
     "retries": 1
   }

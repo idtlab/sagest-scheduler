@@ -6,6 +6,7 @@
 # Usage: scripts/perlmutter/test-login.sh ACCOUNT [RUN_DIR]
 # RUN_DIR defaults to a new directory under $SCRATCH/sagest-tests. Pass an existing one to
 # resume a test that was interrupted; jobs it already submitted are picked up again.
+# When the campaign ends, the run directory (minus snapshots) is saved to perlmutter-results/.
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 account=${1:?usage: test-login.sh ACCOUNT [RUN_DIR]}
@@ -28,7 +29,12 @@ echo "    resume with: $0 $account $run_dir"
 
 code=0
 python3 "$ROOT/campaign.py" run "$config" || code=$?
-echo; echo "==> campaign.py exited $code"
-python3 "$ROOT/campaign.py" status "$config"
-echo
-python3 "$ROOT/scripts/common/check_euler_run.py" "$run_dir"
+result=0
+{
+    echo "==> campaign.py exited $code"
+    python3 "$ROOT/campaign.py" status "$config" || true
+    echo
+    python3 "$ROOT/scripts/common/check_euler_run.py" "$run_dir"
+} 2>&1 | tee "$run_dir/report.txt" || result=$?
+"$ROOT/scripts/perlmutter/save-results.sh" "$run_dir"
+exit $result

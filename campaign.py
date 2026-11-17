@@ -234,7 +234,7 @@ def sbatch_args(cfg, kind, job_name, attempt_dir, limit):
     return ["sbatch", "--parsable", f"--job-name={job_name}", f"--chdir={attempt_dir}",
             f"--output={os.path.join(attempt_dir, 'stdout.log')}",
             f"--error={os.path.join(attempt_dir, 'stderr.log')}",
-            f"--time={slurm_time(limit)}", *queue_args(cfg), *nodes,
+            f"--time={slurm_time(limit)}", *queue_args(cfg, comp), *nodes,
             *comp.get("slurm_args", []), "--wrap", shlex.join(comp["command"])]
 
 
@@ -291,7 +291,7 @@ ALLOCATION = {"nodes": (_int(1), False), "time": (_RUN_TIME, False),
               "max_time": (_RUN_TIME, False), "flux_args": (_ARGS, False),
               "slurm_args": (_ARGS, False)}
 COMPONENT = {"command": (_COMMAND, True), "nodes": (_int(1), False), "flux_args": (_ARGS, False),
-             "slurm_args": (_ARGS, False),
+             "slurm_args": (_ARGS, False), "queue": (_TEXT, False), "bank": (_TEXT, False),
              "params": (_OBJECT, False), "retries": (_int(0), False),
              "failures": (_OBJECT, False)}
 ENSEMBLE = dict(COMPONENT, size=(_int(1), True))
@@ -443,17 +443,20 @@ def new_cycle(cfg, state):
 
 # ---- one job ----------------------------------------------------------------------------
 
-def queue_args(cfg):
+def queue_args(cfg, comp=None):
+    """A component's own queue and bank override the top-level ones (Perlmutter charges GPU
+    jobs to a separate account)."""
     bank = "-A" if scheduler(cfg) == "slurm" else "-B"
-    return [arg for flag, key in (("-q", "queue"), (bank, "bank")) if cfg.get(key)
-            for arg in (flag, cfg[key])]
+    values = dict(cfg, **{k: v for k, v in (comp or {}).items() if k in ("queue", "bank")})
+    return [arg for flag, key in (("-q", "queue"), (bank, "bank")) if values.get(key)
+            for arg in (flag, values[key])]
 
 
 def submit_args(cfg, mode, kind, job_name, attempt_dir, limit):
     comp = cfg[kind]
     nodes = ["-N", str(comp["nodes"])] if "nodes" in comp else []
     # An allocation has its own scheduler, which rejects -q and -B.
-    queue = queue_args(cfg) if mode == "login" else []
+    queue = queue_args(cfg, comp) if mode == "login" else []
     return ["submit", f"--job-name={job_name}", f"--cwd={attempt_dir}", "--output=stdout.log",
             "--error=stderr.log", "-t", f"{math.ceil(limit)}s", *queue, *nodes,
             *comp.get("flux_args", []), *comp["command"]]
@@ -775,7 +778,8 @@ def main():
     if mode is None:
         sys.exit("error: start campaign.py on a login node or inside an allocation "
                  "(flux batch/alloc, sbatch/salloc), not inside a single job")
-    if mode == "login" and cfg.get("bank") == "YOUR_BANK":
+    if mode == "login" and "YOUR_BANK" in [cfg.get("bank"), cfg["ensemble"].get("bank"),
+                                           cfg["analysis"].get("bank")]:
         config_error("config error: set bank in the config")
     if args.command == "batch":
         if mode != "login":

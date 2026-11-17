@@ -273,6 +273,7 @@ Both take the same keys, except `size`, which only `ensemble` has.
 | `nodes` | no | not passed | Nodes per job, passed as `-N`. Also used by `batch` to size the allocation, where missing counts as 1 |
 | `flux_args` | no | `[]` | Extra arguments for `flux submit`, passed unchanged, e.g. `["-n4", "-c24", "-g1", "--exclusive"]` |
 | `slurm_args` | no | `[]` | Extra arguments for `sbatch` (login mode) or `srun` (allocation mode), e.g. `["-C", "cpu", "-c", "2"]` |
+| `queue`, `bank` | no | the top-level ones | Override the top-level `queue` and `bank` for this component's jobs in login mode, e.g. Perlmutter's `_g` account for GPU jobs |
 | `params` | no | `{}` | Parameters written to each job's `params.json` |
 | `retries` | no | `0` | Retries allowed for unpredicted failures, per member per cycle |
 | `failures` | no | `{}` | Named predicted failures; see section 7 |

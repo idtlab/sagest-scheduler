@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Write a copy of a config for one test run: sets run_dir and bank, and resolves {config_dir}
-against the original's directory so the copy can live anywhere (e.g. on scratch).
+against the original's directory so the copy can live anywhere (e.g. on scratch). YOUR_BANK
+in any bank is replaced with BANK, so "YOUR_BANK_g" becomes BANK_g.
 
 Usage: test_config.py TEMPLATE OUT --run-dir DIR [--bank BANK]
 """
@@ -22,7 +23,10 @@ for kind in ("ensemble", "analysis"):
     cfg[kind]["command"] = [c.replace("{config_dir}", config_dir) for c in cfg[kind]["command"]]
 cfg["run_dir"] = os.path.abspath(args.run_dir)
 if args.bank:
-    cfg["bank"] = args.bank
+    for section in (cfg, cfg["ensemble"], cfg["analysis"]):
+        if "bank" in section:
+            section["bank"] = section["bank"].replace("YOUR_BANK", args.bank)
+    cfg.setdefault("bank", args.bank)
 os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
 with open(args.out, "w") as handle:
     json.dump(cfg, handle, indent=2)

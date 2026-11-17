@@ -6,7 +6,7 @@
   "poll_seconds": 15,
   "queue": "shared",
   "bank": "YOUR_BANK",
-  "time": {"member": "2m", "analysis": "1m", "buffer": "3m"},
+  "time": {"member": "2m", "analysis": "3m", "buffer": "3m"},
   "ensemble": {
     "size": 4,
     "slurm_args": ["-C", "cpu", "-c", "2", "--mem-per-cpu=1G"],
@@ -24,8 +24,9 @@
     }
   },
   "analysis": {
-    "slurm_args": ["-C", "cpu", "-c", "1", "--mem-per-cpu=1G"],
-    "command": ["python3", "{config_dir}/../../components/mlef_stub.py"],
+    "bank": "YOUR_BANK_g",
+    "slurm_args": ["-C", "gpu", "--gpus=1", "-c", "32"],
+    "command": ["python3", "{config_dir}/../../components/mlef_analysis.py"],
     "retries": 1
   }
 }

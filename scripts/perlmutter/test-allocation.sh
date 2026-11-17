@@ -5,6 +5,7 @@
 # Uses configs/perlmutter/euler-allocation.json.
 #
 # Usage: scripts/perlmutter/test-allocation.sh ACCOUNT [RUN_DIR]
+# When the allocation ends, the run directory (minus snapshots) is saved to perlmutter-results/.
 # POLL_SECONDS (default 30) sets how often it checks whether the allocation ended.
 #
 # To watch it interactively instead, get an allocation and run campaign.py in it yourself:
@@ -39,9 +40,15 @@ while state=$(squeue -h -j "$job" -o %T 2>/dev/null) && [[ -n $state ]]; do
     sleep ${POLL_SECONDS:-30}
 done
 
-echo; echo "==> allocation $job and its steps"
-sacct -j "$job" -o JobID,JobName%42,State,ExitCode,Start,End
 echo
-python3 "$ROOT/campaign.py" status "$config"
-echo
-python3 "$ROOT/scripts/common/check_euler_run.py" "$run_dir"
+result=0
+{
+    echo "==> allocation $job and its steps"
+    sacct -j "$job" -o JobID,JobName%42,State,ExitCode,Start,End || true
+    echo
+    python3 "$ROOT/campaign.py" status "$config" || true
+    echo
+    python3 "$ROOT/scripts/common/check_euler_run.py" "$run_dir"
+} 2>&1 | tee "$run_dir/report.txt" || result=$?
+"$ROOT/scripts/perlmutter/save-results.sh" "$run_dir"
+exit $result

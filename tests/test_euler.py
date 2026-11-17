@@ -14,6 +14,9 @@ import campaign  # noqa: E402
 
 MEMBER = os.path.join(ROOT, "components", "euler_member.py")
 STUB = os.path.join(ROOT, "components", "mlef_stub.py")
+ANALYSIS = os.path.join(ROOT, "components", "mlef_analysis.py")
+FAKE_MLEF = os.path.join(ROOT, "tests", "fake_mlef.py")
+MAKE_OBS = os.environ.get("MAKE_OBS_EXE") or os.path.join(ROOT, "build", "local", "bin", "make_obs")
 EXE = os.environ.get("EULER_EXE") or os.path.join(ROOT, "external", "euler-miniapp", "main_cpu")
 BUILT = os.access(EXE, os.X_OK)
 IN_FLUX = bool(os.environ.get("FLUX_URI")) and shutil.which("flux")
@@ -47,16 +50,21 @@ class ComponentTests(unittest.TestCase):
                                        ORCH_PARAMS=os.path.join(attempt_dir, "params.json")))
         return done, attempt_dir
 
-    def run_stub(self, cycle, member_dirs):
+    def run_stub(self, cycle, member_dirs, script=STUB, member_params=None, params=None):
         attempt_dir = os.path.join(self.tmp, f"cycle_{cycle}", "analysis", "attempt_1")
         os.makedirs(attempt_dir)
         manifest = os.path.join(self.tmp, f"cycle_{cycle}", "manifest.json")
         with open(manifest, "w") as handle:
-            json.dump({"cycle": cycle, "members": [{"name": f"member_{i}", "dir": d}
-                                                   for i, d in enumerate(member_dirs)]}, handle)
-        done = subprocess.run([sys.executable, STUB], encoding="utf-8",
+            json.dump({"cycle": cycle, "members": [
+                {"name": f"member_{i}", "dir": d, "params": member_params or {}}
+                for i, d in enumerate(member_dirs)]}, handle)
+        with open(os.path.join(attempt_dir, "params.json"), "w") as handle:
+            json.dump(params or {}, handle)
+        done = subprocess.run([sys.executable, script], encoding="utf-8",
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              env=dict(os.environ, ORCH_DIR=attempt_dir, ORCH_MANIFEST=manifest))
+                              env=dict(os.environ, ORCH_DIR=attempt_dir, ORCH_MANIFEST=manifest,
+                                       ORCH_PARAMS=os.path.join(attempt_dir, "params.json"),
+                                       MLEF_EXE=FAKE_MLEF, MAKE_OBS_EXE=MAKE_OBS))
         return done, attempt_dir
 
     def result(self, attempt_dir):
@@ -117,6 +125,47 @@ class ComponentTests(unittest.TestCase):
         done, attempt_dir = self.run_member(0, 1, member_params(restart_dir=restart_dir))
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(self.result(attempt_dir)["step"], 10)
+
+    @unittest.skipUnless(os.access(MAKE_OBS, os.X_OK), f"{MAKE_OBS} not built")
+    def test_mlef_analysis_observes_a_truth_run_that_cycles_too(self):
+        carried = {}
+        for cycle in (0, 1):
+            params = member_params(**carried)
+            dirs = []
+            for member in (0, 1):
+                done, attempt_dir = self.run_member(member, cycle, params)
+                self.assertEqual(done.returncode, 0, done.stderr)
+                dirs.append(attempt_dir)
+            done, analysis_dir = self.run_stub(cycle, dirs, ANALYSIS, params)
+            self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
+            step = 5 * (cycle + 1)
+            self.assertIn(f"observations at step {step}", done.stdout)
+            self.assertIn("fake_mlef: wrote 2 analysis member(s)", done.stdout)
+            obs = os.path.join(analysis_dir, f"observation_{step:06d}.cgns")
+            with open(os.path.join(analysis_dir, "mlef.input")) as handle:
+                self.assertIn(f"observation_file    = {obs}", handle.read())
+            with open(os.path.join(analysis_dir, "truth", "euler.log")) as handle:
+                self.assertEqual("Resumed from CGNS restart at step -- 5" in handle.read(),
+                                 cycle == 1)
+            # The truth is unperturbed, so it observes the nominal left-plateau density.
+            self.assertRegex(done.stdout, r"\(0\.1, 0\.5, 0\.5\) Density = (1\.000|0\.999)")
+            with open(os.path.join(analysis_dir, "next_cycle.json")) as handle:
+                carried = json.load(handle)["params"]
+            self.assertEqual(carried, {"restart_dir": os.path.join(analysis_dir, "analysis"),
+                                       "truth_dir": os.path.join(analysis_dir, "truth", "plot")})
+        with open(os.path.join(dirs[0], "euler.log")) as handle:
+            self.assertIn("Resumed from CGNS restart at step -- 5", handle.read())
+
+    def test_mlef_analysis_fails_when_mlef_does(self):
+        done, attempt_dir = self.run_member(0, 0, member_params())
+        self.assertEqual(done.returncode, 0, done.stderr)
+        obs_dir = os.path.join(self.tmp, "obs")
+        os.makedirs(obs_dir)
+        open(os.path.join(obs_dir, "observation_000005.cgns"), "w").close()
+        done, _ = self.run_stub(0, [attempt_dir], ANALYSIS, member_params(),
+                                {"obs_dir": obs_dir, "mlef_exe": "/bin/false"})
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("mlef exited 1", done.stderr)
 
     def test_stub_rejects_members_at_different_steps(self):
         done0, dir0 = self.run_member(0, 0, member_params())

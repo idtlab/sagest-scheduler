@@ -78,20 +78,22 @@ class SlurmParsingTests(unittest.TestCase):
                "allocation": {"nodes": 2, "slurm_args": ["-C", "cpu"]},
                "ensemble": {"size": 4, "command": ["a", "b c"],
                             "slurm_args": ["-C", "cpu", "-c", "2"]},
-               "analysis": {"command": ["an"]}}
+               "analysis": {"command": ["an"], "bank": "m1234_g"}}
         sbatch = campaign.sbatch_args(cfg, "ensemble", "n", "/d", 90)
         self.assertEqual(sbatch[:3], ["sbatch", "--parsable", "--job-name=n"])
         self.assertIn("--time=0:02:00", sbatch)
         self.assertIn("--output=/d/stdout.log", sbatch)
         self.assertEqual(sbatch[sbatch.index("-q"):], ["-q", "shared", "-A", "m1234", "-C", "cpu",
                                                        "-c", "2", "--wrap", "a 'b c'"])
+        analysis = campaign.sbatch_args(cfg, "analysis", "n", "/d", 60)
+        self.assertEqual(analysis[analysis.index("-q"):][:4], ["-q", "shared", "-A", "m1234_g"])
         srun = campaign.srun_args(cfg, "ensemble", "n", "/d", 90)
         self.assertEqual(srun[:4], ["srun", "--exact", "-N", "1"])
         self.assertNotIn("-q", srun)
         self.assertEqual(srun[-6:], ["-C", "cpu", "-c", "2", "a", "b c"])
         batch = campaign.batch_args(cfg)
         self.assertEqual(batch[:4], ["sbatch", "--parsable", "-N", "2"])
-        self.assertIn("-A", batch)
+        self.assertEqual(batch[batch.index("-A") + 1], "m1234")
         self.assertEqual(batch[-2], "--wrap")
         self.assertTrue(batch[-1].endswith("campaign.py run /c.json"))
 

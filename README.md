@@ -56,7 +56,8 @@ See `configs/tuolumne/sagest.json` (Flux) and `configs/perlmutter/euler-login.js
 
 - `queue` and `bank` go on each job in login mode, and on the allocation in allocation mode.
   Jobs inside an allocation never get them, because the allocation's scheduler rejects `-q`.
-  With Slurm, `queue` is the QOS and `bank` the account.
+  With Slurm, `queue` is the QOS and `bank` the account. `ensemble` and `analysis` can set
+  their own, such as a GPU account for the analysis.
 - Each component's `nodes` becomes `-N`. Its `flux_args` go straight to `flux submit`, and its
   `slurm_args` to `sbatch` (login mode) or `srun` (allocation mode). Only the current
   scheduler's are used.
@@ -129,13 +130,15 @@ scripts/local/build.sh     # or scripts/perlmutter/build.sh or scripts/tuolumne/
 ```
 
 Each machine's `build.sh` builds the CPU versions of HashBrick and euler-miniapp
-(`external/euler-miniapp/main_cpu`, 2D by default, `--spacedim 3` for 3D). CGNS and a serial
-HDF5 are built from source into `build/<machine>/deps` unless `CGNS_DIR` points at an install.
+(`external/euler-miniapp/main_cpu`, 2D by default, `--spacedim 3` for 3D), and
+`build/<machine>/bin/make_obs`. CGNS and a serial HDF5 are built from source into
+`build/<machine>/deps` unless `CGNS_DIR` points at an install.
 
-`--cuda` builds the GPU versions instead (`main_gpu`) along with libMLEF's `mlef` and its
-tests. It needs the CUDA toolkit but no GPU; `--cuda-arch 80` targets A100s, and the default
-is 90. HashBrick's configure can't detect a GPU on a build machine, so it always uses its GH200
-preset, and only the architecture changes.
+`--mlef` adds libMLEF's `mlef` and its tests, keeping the CPU members; Perlmutter's
+`build.sh` always passes it, with `--cuda-arch 80` for the A100s. `--cuda` builds the GPU
+versions of euler-miniapp and HashBrick too (`main_gpu`). Both need the CUDA toolkit but no
+GPU, and the default architecture is 90. HashBrick's configure can't detect a GPU on a build
+machine, so it always uses its GH200 preset, and only the architecture changes.
 
 `components/euler_member.py` runs one member. Cycle 0 perturbs each member's initial
 conditions, as libMLEF's `run_ensemble.sh` does, and later cycles restart each member from the
@@ -143,9 +146,14 @@ analysis. A member exits 20 if the solution goes non-finite, because euler-minia
 0 then. euler-miniapp crashes on any input value longer than 199 characters, so the wrapper
 passes paths relative to the attempt directory.
 
-libMLEF's `mlef` needs CUDA, so the analysis is `components/mlef_stub.py` for now. It lays the
-forecasts out the way `mlef` reads them and writes an `mlef.input`, then copies each forecast
-unchanged to where `mlef` would write the analysis.
+`components/mlef_analysis.py` runs `mlef` on the forecasts, which needs a GPU. Unless
+`obs_dir` names a directory of observation files, it runs a twin experiment: a truth run with
+the members' settings and unperturbed initial conditions, which `make_obs` samples at the
+analysis step (four density probes by default). The truth restarts each cycle from the last,
+like the members. Members of the next cycle restart from `mlef`'s analysis.
+
+Without a GPU, `components/mlef_stub.py` stands in: it lays the forecasts out the same way and
+copies each one unchanged to where `mlef` would write the analysis. The local configs use it.
 
 ## Testing
 
@@ -156,20 +164,23 @@ flux start --test-size=2 python3 -m unittest discover -s tests
 
 The euler-miniapp tests skip themselves until `main_cpu` is built. The Slurm tests run against
 `tests/fake_slurm`, which stands in for `sbatch`, `sacct`, `squeue` and `srun` with local
-processes. CI fetches the submodules with the `SAGESTGIT_TOKEN` repository secret. Its CUDA job
+processes, and the MLEF analysis tests run `tests/fake_mlef.py` in place of `mlef`. CI fetches the submodules with the `SAGESTGIT_TOKEN` repository secret. Its CUDA job
 only compiles, since GitHub's runners have no GPU.
 
 ### Perlmutter
 
 From a login node, each test builds, writes its config and runs under `$SCRATCH/sagest-tests`,
-then checks every cycle completed and every later member restarted from the analysis:
+then checks every cycle completed, every later member restarted from the analysis, and `mlef`
+moved the ensemble mean each cycle. Members run on CPUs, and `mlef` on one A100 charged to
+`ACCOUNT_g`:
 
 ```bash
 scripts/perlmutter/test-login.sh ACCOUNT        # in tmux: one sbatch job per member, shared QOS
-scripts/perlmutter/test-allocation.sh ACCOUNT   # one debug allocation, members as srun steps
+scripts/perlmutter/test-allocation.sh ACCOUNT   # one debug GPU node, all jobs as srun steps
 ```
 
-Pass a test's run directory as a second argument to resume it.
+Pass a test's run directory as a second argument to resume it. When a test ends, its run
+directory, without the CGNS snapshots, is saved to `perlmutter-results/` to commit and push.
 
 ### Tuolumne
 
@@ -199,5 +210,5 @@ processes before a large campaign.
 - Don't run two copies on one `run_dir`.
 - If `campaign.py` dies in the moment between a submit and recording the job ID, that job keeps
   running untracked, and its member is submitted again in a new directory.
-- The Slurm code has only run against `tests/fake_slurm`, not a real Slurm cluster, until the
-  Perlmutter tests have been run.
+- Slurm login mode has run on Perlmutter with the stub analysis. Allocation mode has only run
+  against `tests/fake_slurm`, and `components/mlef_analysis.py` only with `tests/fake_mlef.py`.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analysis stand-in for libMLEF's mlef, which needs CUDA.
+"""Analysis stand-in for libMLEF's mlef, for machines without a GPU.
 
 Lays out the forecast ensemble the way mlef reads it (forecast/mem_XXX, plus an mlef input
 file) and checks every member reached the same step. Then it does an identity analysis:
@@ -14,33 +14,44 @@ import shutil
 import sys
 
 
-def main():
-    with open(os.environ["ORCH_MANIFEST"]) as handle:
-        manifest = json.load(handle)
-    attempt_dir = os.environ["ORCH_DIR"]
+def gather(manifest, attempt_dir):
+    """Link each member's plot directory as forecast/mem_XXX and return the members'
+    results, the common step and the snapshot file prefix."""
     forecast_root = os.path.join(attempt_dir, "forecast")
-    analysis_root = os.path.join(attempt_dir, "analysis")
-
+    os.makedirs(forecast_root, exist_ok=True)
     results = []
     for index, member in enumerate(manifest["members"]):
         with open(os.path.join(member["dir"], "result.json")) as handle:
             results.append(json.load(handle))
         link = os.path.join(forecast_root, f"mem_{index:03d}")
-        os.makedirs(forecast_root, exist_ok=True)
         if not os.path.islink(link):
             os.symlink(os.path.dirname(results[-1]["snapshot"]), link)
     steps = {r["step"] for r in results}
     if len(steps) != 1:
-        sys.exit(f"mlef_stub: members ended at different steps {sorted(steps)}")
-    step = steps.pop()
-    prefix = f"{results[0]['problem']}_{results[0]['spacedim']}d_"
+        sys.exit(f"members ended at different steps {sorted(steps)}")
+    return results, steps.pop(), f"{results[0]['problem']}_{results[0]['spacedim']}d_"
 
-    with open(os.path.join(attempt_dir, "mlef.input"), "w") as handle:
-        handle.write(f"ensemble_root       = {forecast_root}\n"
+
+def write_input(attempt_dir, prefix, step, observation_file=None):
+    path = os.path.join(attempt_dir, "mlef.input")
+    with open(path, "w") as handle:
+        handle.write(f"ensemble_root       = {os.path.join(attempt_dir, 'forecast')}\n"
                      f"member_prefix       = mem_\n"
                      f"filename_prefix     = {prefix}\n"
-                     f"snapshot_step       = {step}\n"
-                     f"analysis_output_dir = {analysis_root}\n")
+                     f"snapshot_step       = {step}\n")
+        if observation_file:
+            handle.write(f"observation_file    = {observation_file}\n")
+        handle.write(f"analysis_output_dir = {os.path.join(attempt_dir, 'analysis')}\n")
+    return path
+
+
+def main():
+    with open(os.environ["ORCH_MANIFEST"]) as handle:
+        manifest = json.load(handle)
+    attempt_dir = os.environ["ORCH_DIR"]
+    analysis_root = os.path.join(attempt_dir, "analysis")
+    results, step, prefix = gather(manifest, attempt_dir)
+    write_input(attempt_dir, prefix, step)
 
     for index, result in enumerate(results):
         out = os.path.join(analysis_root, f"mem_{index:03d}")
