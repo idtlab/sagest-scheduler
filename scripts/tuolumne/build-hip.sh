@@ -6,12 +6,14 @@
 # from the libMLEF branch the submodule pins, so that commit is applied on top. Its configure
 # rewrites the CUDA sources into .hip files in place (cudaToHip.pl), and euler-miniapp's
 # sources need the same conversion. Both are done on copies under $BUILD_DIR/hip so that
-# external/ stays the CUDA source the other machines build.
+# external/ stays the CUDA source the other machines build. Configure follows the "Using
+# Tuolumne" page of HashBrick's wiki; the settings it gets wrong for this build are corrected
+# in the generated Make.defs and Config.hpp afterwards.
 #
 # Usage: build-hip.sh [-j N] [--clean]
 # Environment: BUILD_DIR (required), HIP_HASHBRICK_REF (default origin/automated_hip),
 #   HIP_RESTART_COMMIT (default 8bdea8e, empty to skip), ROCM_PATH (default: from hipcc),
-#   HIP_CXX (host compiler; default ROCm's amdclang++), HIP_ARCH (default gfx942, MI300A),
+#   HIP_ARCH (default gfx942, MI300A),
 #   SAGEST_HIP_MODULES (default rocmcc/7.14-magic; see env.sh)
 # Result: $BUILD_DIR/hip/euler-miniapp/main_gpu and $BUILD_DIR/env-hip.sh.
 set -euo pipefail
@@ -66,8 +68,12 @@ if [[ -z $rocm ]]; then
 fi
 ROCM_PATH=$rocm
 HIP_ARCH=${HIP_ARCH:-gfx942}
-# HashBrick's .cpp files include hip_runtime.h too, which expects ROCm's clang.
-HIP_CXX=${HIP_CXX:-$(command -v amdclang++ || ls "$ROCM_PATH"/llvm/bin/amdclang++ 2>/dev/null || echo "${CXX:-g++}")}
+# HashBrick's .cpp files include libhipcxx's atomics too, which only compile as HIP, so hipcc
+# compiles everything. C++20 because HashBrick uses requires clauses (configure's HIPFLAGS say
+# c++17, and its compiler detection doesn't recognize LC's wrappers, leaving CXXFLAGS empty).
+HIP_CXX=$ROCM_PATH/bin/hipcc
+HIP_CXXFLAGS="-O3 -march=native -std=c++20 -Wall -Wno-unknown-pragmas -x hip --offload-arch=$HIP_ARCH -fgpu-rdc -munsafe-fp-atomics"
+WARP_SIZE=64   # MI300A wavefront; configure only detects the warp size for CUDA
 
 hb_commit=$(git -C "$HASHBRICK_SRC" rev-parse --verify -q "$REF^{commit}" || true)
 if [[ -z $hb_commit ]]; then
@@ -77,7 +83,7 @@ fi
 euler_commit=$(git -C "$EULER_SRC" rev-parse HEAD)
 
 # Reconfiguring HashBrick rebuilds everything, so only start over when an input changed.
-config="script=$(md5sum < "${BASH_SOURCE[0]}" | cut -c1-8) hashbrick=$hb_commit restart=$RESTART euler=$euler_commit spacedim=$EULER_SPACEDIM cgns=$CGNS_DIR rocm=$ROCM_PATH cxx=$HIP_CXX arch=$HIP_ARCH"
+config="script=$(md5sum < "${BASH_SOURCE[0]}" | cut -c1-8) hashbrick=$hb_commit restart=$RESTART euler=$euler_commit spacedim=$EULER_SPACEDIM cgns=$CGNS_DIR rocm=$ROCM_PATH arch=$HIP_ARCH"
 stamp=$HIP_DIR/sagest-config
 HASHBRICK=$HIP_DIR/hashbrick
 EULER=$HIP_DIR/euler-miniapp
@@ -95,15 +101,17 @@ if (( CLEAN )) || [[ "$(cat "$stamp" 2>/dev/null)" != "$config" ]]; then
     git -C "$EULER_SRC" archive HEAD | tar x -C "$EULER"
 
     step "configuring HashBrick for HIP"
-    (cd "$HASHBRICK" && ./configure --with-hip="$ROCM_PATH" --enable-release \
+    (cd "$HASHBRICK" && ./configure --with-hip="$ROCM_PATH" --with-computer=tuolumne --enable-release \
         --with-spacedim="$EULER_SPACEDIM" --with-cgns="$CGNS_DIR" CXX="$HIP_CXX") \
         > "$HIP_DIR/hashbrick-configure.log"
     sed -n '/Configuration summary/,$p' "$HIP_DIR/hashbrick-configure.log"
-    # configure picks the architecture from rocminfo or the host name; MI300A is gfx942.
-    if ! grep -q "Architecture *: *$HIP_ARCH\$" "$HIP_DIR/hashbrick-configure.log"; then
-        sed -i "s/--offload-arch=gfx[0-9a-z]*/--offload-arch=$HIP_ARCH/" "$HASHBRICK/Common/mk/Make.defs"
-        echo "    using --offload-arch=$HIP_ARCH instead"
-    fi
+    defs=$HASHBRICK/Common/mk/Make.defs
+    sed -i -E -e "s|^(HIPARCH +:=).*|\1 --offload-arch=$HIP_ARCH|" \
+              -e "s|^(HIPFLAGS +:=.*)--std=c\+\+17|\1--std=c++20|" \
+              -e "s|^(CXXFLAGS +:=).*|\1 $HIP_CXXFLAGS|" "$defs"
+    sed -i -E "s|^/\* #undef HBR_SYSTEM_CUDAATTR_WARP_SIZE \*/|#define HBR_SYSTEM_CUDAATTR_WARP_SIZE $WARP_SIZE\n#define HBR_SYSTEM_HIPATTR_WARP_SIZE $WARP_SIZE|" \
+        "$HASHBRICK/lib/src/HashBrick/Config.hpp"
+    grep -E "^(CXX|CXXFLAGS|HIPFLAGS|HIPARCH) " "$defs" | sed 's/^/    /'
     perl "$HASHBRICK/cudaToHip.pl" -p "$EULER" > "$HIP_DIR/euler-cudaToHip.log"
     # cudaToHip.pl turns __CUDA_ARCH__ into __HIP_DEVICE_COMPILE__ but leaves CUDA's __trap().
     grep -rlZ --include='*.hpp' --include='*.hip' '__trap()' "$HASHBRICK/lib" "$EULER" \

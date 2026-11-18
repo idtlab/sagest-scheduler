@@ -211,9 +211,12 @@ The HIP build (`scripts/tuolumne/build-hip.sh`, run by `scripts/tuolumne/build.s
 `libMLEF` branch applied, since `automated_hip` doesn't have it yet. HashBrick's configure and
 `cudaToHip.pl` rewrite the CUDA sources in place, so it works on copies of HashBrick and
 euler-miniapp under `build/tuolumne/hip/` and leaves `external/` as the CUDA source the other
-machines build. HashBrick's HIP code needs libhipcxx (`cuda/atomic`), which on Tuolumne only the
-`rocmcc/7.14-magic` packages include, so it loads that module (`SAGEST_HIP_MODULES` for others), compiles for
-`gfx942` and uses ROCm's `amdclang++` as the host compiler (`HIP_ARCH`, `HIP_CXX`).
+machines build. Configure follows the "Using Tuolumne" page of HashBrick's wiki, including the
+`rocmcc/7.14-magic` module (`SAGEST_HIP_MODULES` for others), the only ROCm on Tuolumne with the
+libhipcxx headers HashBrick needs. The script then corrects what configure gets wrong for this
+build: every file, `.cpp` included, is compiled as HIP with `hipcc`, as C++20, for `gfx942`
+(`HIP_ARCH`), and the warp size is set to 64. It also replaces the `__trap()` that `cudaToHip.pl`
+leaves in device code.
 
 They work like the Perlmutter tests: run directories go under `/p/lustre*/$USER/sagest-tests`
 (or `$SAGEST_TEST_ROOT`), and results are saved to `tuolumne-results/`. `scripts/tuolumne/env.sh`
