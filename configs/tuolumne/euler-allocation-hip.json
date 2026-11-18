@@ -14,7 +14,7 @@
     "command": ["python3", "{config_dir}/../../components/euler_member.py"],
     "params": {
       "steps_per_cycle": 20,
-      "overrides": {"number_cells": "63 63"},
+      "overrides": {"number_cells": "63 63 63", "domain_length": "0.984375 0.984375 0.984375"},
       "perturb": {"sigma": 0.05, "seed_base": 1,
                   "keys": {"SHOCK.pressureLow": 10000, "SHOCK.pressureHigh": 100000,
                            "SHOCK.densityLow": 0.125, "SHOCK.densityHigh": 1.0}}

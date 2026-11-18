@@ -207,16 +207,21 @@ scripts/tuolumne/test-login.sh --hip BANK  # the same with one GPU per member (a
 ```
 
 The HIP build (`scripts/tuolumne/build-hip.sh`, run by `scripts/tuolumne/build.sh` unless
-`--cpu-only`) uses HashBrick's `automated_hip` branch with the CGNS restart commit from the
-`libMLEF` branch applied, since `automated_hip` doesn't have it yet. HashBrick's configure and
-`cudaToHip.pl` rewrite the CUDA sources in place, so it works on copies of HashBrick and
-euler-miniapp under `build/tuolumne/hip/` and leaves `external/` as the CUDA source the other
-machines build. Configure follows the "Using Tuolumne" page of HashBrick's wiki, including the
+`--cpu-only`) can't use the commits the submodules pin: they use an older HashBrick API than any
+HashBrick branch with HIP support. It builds HashBrick's `key_cache` branch with euler-miniapp's
+`key_cache` branch instead, with the CGNS restart commits from both `libMLEF` branches applied,
+and in 3D, since `key_cache`'s euler-miniapp doesn't build in 2D yet. The `-hip` configs run a
+63x63x63 shock tube. HashBrick's configure and `cudaToHip.pl` rewrite the CUDA sources in place,
+so it works on copies under `build/tuolumne/hip/` and leaves `external/` alone.
+
+Configure follows the "Using Tuolumne" page of HashBrick's wiki, including the
 `rocmcc/7.14-magic` module (`SAGEST_HIP_MODULES` for others), the only ROCm on Tuolumne with the
-libhipcxx headers HashBrick needs. The script then corrects what configure gets wrong for this
-build: every file, `.cpp` included, is compiled as HIP with `hipcc`, as C++20, for `gfx942`
-(`HIP_ARCH`), and the warp size is set to 64. It also replaces the `__trap()` that `cudaToHip.pl`
-leaves in device code.
+libhipcxx headers HashBrick needs. The script then corrects what configure and `cudaToHip.pl`
+get wrong for this build: every file, `.cpp` included, is compiled as HIP with `hipcc`, as
+C++20, for `gfx942` (`HIP_ARCH`); the warp size (64) and compute unit count (228) are defined;
+`__trap()` becomes `__builtin_trap()`; and a typo in `HashLayout.hpp` that CUDA builds never
+instantiate is fixed. The branches and restart commits can be changed with `HIP_HASHBRICK_REF`,
+`HIP_EULER_REF`, `HIP_RESTART_COMMIT` and `HIP_EULER_RESTART_COMMIT`.
 
 They work like the Perlmutter tests: run directories go under `/p/lustre*/$USER/sagest-tests`
 (or `$SAGEST_TEST_ROOT`), and results are saved to `tuolumne-results/`. `scripts/tuolumne/env.sh`
@@ -239,5 +244,5 @@ runs the example components instead of euler-miniapp.
   running untracked, and its member is submitted again in a new directory.
 - Slurm login mode has run on Perlmutter, with both the stub and the real `mlef`
   (`perlmutter-results/`). Allocation mode has only run against `tests/fake_slurm`. The
-  Tuolumne scripts have only run in a local Flux instance, and the HIP build has only been
-  checked up to compiling, on a machine without ROCm.
+  Tuolumne scripts have only run in a local Flux instance. The HIP build's sources have only
+  been built for CPU (where the 3D restart works); the HIP compile itself is unverified.

@@ -1,18 +1,24 @@
 #!/usr/bin/env bash
 # HIP build of euler-miniapp for Tuolumne's MI300A GPUs. Needs the CPU build first
-# (scripts/tuolumne/build.sh runs both) for CGNS and the spacedim.
+# (scripts/tuolumne/build.sh runs both) for CGNS.
 #
-# HIP support lives on HashBrick's automated_hip branch, which lacks the CGNS restart commit
-# from the libMLEF branch the submodule pins, so that commit is applied on top. Its configure
-# rewrites the CUDA sources into .hip files in place (cudaToHip.pl), and euler-miniapp's
-# sources need the same conversion. Both are done on copies under $BUILD_DIR/hip so that
-# external/ stays the CUDA source the other machines build. Configure follows the "Using
+# The commits the submodules pin use an older HashBrick API than any HashBrick branch with HIP
+# support. So this builds HashBrick's key_cache branch (HIP support plus newer work) with
+# euler-miniapp's key_cache branch, which uses the same API, and applies the CGNS restart
+# commits from both libMLEF branches on top. key_cache's euler-miniapp only builds in 3D for
+# now, so this build is 3D.
+#
+# HashBrick's configure rewrites the CUDA sources into .hip files in place (cudaToHip.pl), and
+# euler-miniapp's sources need the same conversion. Both are done on copies under
+# $BUILD_DIR/hip so that external/ stays the CUDA source the other machines build. Configure
+# follows the "Using
 # Tuolumne" page of HashBrick's wiki; the settings it gets wrong for this build are corrected
 # in the generated Make.defs and Config.hpp afterwards.
 #
 # Usage: build-hip.sh [-j N] [--clean]
-# Environment: BUILD_DIR (required), HIP_HASHBRICK_REF (default origin/automated_hip),
-#   HIP_RESTART_COMMIT (default 8bdea8e, empty to skip), ROCM_PATH (default: from hipcc),
+# Environment: BUILD_DIR (required), HIP_HASHBRICK_REF and HIP_EULER_REF (default
+#   origin/key_cache), HIP_RESTART_COMMIT and HIP_EULER_RESTART_COMMIT (default 8bdea8e and
+#   66a2313, empty to skip), HIP_SPACEDIM (default 3), ROCM_PATH (default: from hipcc),
 #   HIP_ARCH (default gfx942, MI300A),
 #   SAGEST_HIP_MODULES (default rocmcc/7.14-magic; see env.sh)
 # Result: $BUILD_DIR/hip/euler-miniapp/main_gpu and $BUILD_DIR/env-hip.sh.
@@ -24,8 +30,11 @@ BUILD_DIR=$(cd "$BUILD_DIR" && pwd)
 HIP_DIR=$BUILD_DIR/hip
 HASHBRICK_SRC=$ROOT/external/hashbrick
 EULER_SRC=$ROOT/external/euler-miniapp
-REF=${HIP_HASHBRICK_REF:-origin/automated_hip}
+REF=${HIP_HASHBRICK_REF:-origin/key_cache}
 RESTART=${HIP_RESTART_COMMIT-8bdea8e}
+EULER_REF=${HIP_EULER_REF:-origin/key_cache}
+EULER_RESTART=${HIP_EULER_RESTART_COMMIT-66a2313}
+SPACEDIM=${HIP_SPACEDIM:-3}
 JOBS=$(nproc 2>/dev/null || echo 4)
 CLEAN=0
 
@@ -45,7 +54,7 @@ if [[ ! -f $BUILD_DIR/env.sh ]]; then
     echo "error: no $BUILD_DIR/env.sh; run the CPU build first" >&2
     exit 1
 fi
-source "$BUILD_DIR/env.sh"   # CGNS_DIR, EULER_SPACEDIM, MAKE_OBS_EXE
+source "$BUILD_DIR/env.sh"   # CGNS_DIR, MAKE_OBS_EXE
 source "$ROOT/scripts/tuolumne/env.sh"
 load_rocm
 
@@ -73,44 +82,61 @@ HIP_ARCH=${HIP_ARCH:-gfx942}
 # c++17, and its compiler detection doesn't recognize LC's wrappers, leaving CXXFLAGS empty).
 HIP_CXX=$ROCM_PATH/bin/hipcc
 HIP_CXXFLAGS="-O3 -march=native -std=c++20 -Wall -Wno-unknown-pragmas -x hip --offload-arch=$HIP_ARCH -fgpu-rdc -munsafe-fp-atomics"
-WARP_SIZE=64   # MI300A wavefront; configure only detects the warp size for CUDA
+# configure only detects these for CUDA. MI300A: 64-wide wavefronts, 228 compute units.
+GPU_ATTRS="WARP_SIZE=64 MULTIPROCESSOR_COUNT=228"
 
-hb_commit=$(git -C "$HASHBRICK_SRC" rev-parse --verify -q "$REF^{commit}" || true)
-if [[ -z $hb_commit ]]; then
-    echo "error: $REF is not in external/hashbrick; run: git -C external/hashbrick fetch origin" >&2
-    exit 1
-fi
-euler_commit=$(git -C "$EULER_SRC" rev-parse HEAD)
+commit_of() {  # commit_of REPO REF
+    local commit
+    commit=$(git -C "$1" rev-parse --verify -q "$2^{commit}" || true)
+    if [[ -z $commit ]]; then
+        echo "error: $2 is not in $1; run: git -C $1 fetch origin" >&2
+        exit 1
+    fi
+    echo "$commit"
+}
+hb_commit=$(commit_of "$HASHBRICK_SRC" "$REF")
+euler_commit=$(commit_of "$EULER_SRC" "$EULER_REF")
+
+# extract REPO COMMIT PATCH_COMMIT DEST [EXCLUDE]: a copy of COMMIT with PATCH_COMMIT applied
+extract() {
+    git -C "$1" archive "$2" | tar x -C "$4"
+    if [[ -n $3 ]] && ! git -C "$1" merge-base --is-ancestor "$3" "$2"; then
+        echo "    applying $3 to $(basename "$1") ($(git -C "$1" log -1 --format=%s "$3"))"
+        git -C "$1" diff "$3^" "$3" -- . ${5:+":!$5"} | patch -d "$4" -p1 --forward --no-backup-if-mismatch
+    fi
+}
 
 # Reconfiguring HashBrick rebuilds everything, so only start over when an input changed.
-config="script=$(md5sum < "${BASH_SOURCE[0]}" | cut -c1-8) hashbrick=$hb_commit restart=$RESTART euler=$euler_commit spacedim=$EULER_SPACEDIM cgns=$CGNS_DIR rocm=$ROCM_PATH arch=$HIP_ARCH"
+config="script=$(md5sum < "${BASH_SOURCE[0]}" | cut -c1-8) hashbrick=$hb_commit restart=$RESTART euler=$euler_commit euler_restart=$EULER_RESTART spacedim=$SPACEDIM cgns=$CGNS_DIR rocm=$ROCM_PATH arch=$HIP_ARCH"
 stamp=$HIP_DIR/sagest-config
 HASHBRICK=$HIP_DIR/hashbrick
 EULER=$HIP_DIR/euler-miniapp
 if (( CLEAN )) || [[ "$(cat "$stamp" 2>/dev/null)" != "$config" ]]; then
-    step "preparing HashBrick $REF (${hb_commit:0:7}) and euler-miniapp (${euler_commit:0:7}) in $HIP_DIR"
+    step "preparing HashBrick $REF (${hb_commit:0:7}) and euler-miniapp $EULER_REF (${euler_commit:0:7}) in $HIP_DIR"
     rm -rf "$HIP_DIR"
     mkdir -p "$HASHBRICK" "$EULER"
-    git -C "$HASHBRICK_SRC" archive "$hb_commit" | tar x -C "$HASHBRICK"
-    if [[ -n $RESTART ]] && ! git -C "$HASHBRICK_SRC" merge-base --is-ancestor "$RESTART" "$hb_commit"; then
-        echo "    applying ${RESTART} ($(git -C "$HASHBRICK_SRC" log -1 --format=%s "$RESTART"))"
-        # The test makefile's list of tests conflicts and only adds the restart test.
-        git -C "$HASHBRICK_SRC" diff "$RESTART^" "$RESTART" -- . ':!lib/test/HashBrick/GNUmakefile' \
-            | patch -d "$HASHBRICK" -p1 --forward --no-backup-if-mismatch
-    fi
-    git -C "$EULER_SRC" archive HEAD | tar x -C "$EULER"
+    # The restart commit's change to the test makefile conflicts; it only adds its own test.
+    extract "$HASHBRICK_SRC" "$hb_commit" "$RESTART" "$HASHBRICK" lib/test/HashBrick/GNUmakefile
+    extract "$EULER_SRC" "$euler_commit" "$EULER_RESTART" "$EULER"
 
     step "configuring HashBrick for HIP"
     (cd "$HASHBRICK" && ./configure --with-hip="$ROCM_PATH" --with-computer=tuolumne --enable-release \
-        --with-spacedim="$EULER_SPACEDIM" --with-cgns="$CGNS_DIR" CXX="$HIP_CXX") \
+        --with-spacedim="$SPACEDIM" --with-cgns="$CGNS_DIR" CXX="$HIP_CXX") \
         > "$HIP_DIR/hashbrick-configure.log"
     sed -n '/Configuration summary/,$p' "$HIP_DIR/hashbrick-configure.log"
     defs=$HASHBRICK/Common/mk/Make.defs
     sed -i -E -e "s|^(HIPARCH +:=).*|\1 --offload-arch=$HIP_ARCH|" \
               -e "s|^(HIPFLAGS +:=.*)--std=c\+\+17|\1--std=c++20|" \
               -e "s|^(CXXFLAGS +:=).*|\1 $HIP_CXXFLAGS|" "$defs"
-    sed -i -E "s|^/\* #undef HBR_SYSTEM_CUDAATTR_WARP_SIZE \*/|#define HBR_SYSTEM_CUDAATTR_WARP_SIZE $WARP_SIZE\n#define HBR_SYSTEM_HIPATTR_WARP_SIZE $WARP_SIZE|" \
-        "$HASHBRICK/lib/src/HashBrick/Config.hpp"
+    # cudaToHip.pl renames these to HIPATTR in some files and not others, so define both.
+    for attr in $GPU_ATTRS; do
+        name=${attr%%=*} value=${attr#*=}
+        sed -i -E "s|^/\\* #undef HBR_SYSTEM_CUDAATTR_$name \\*/|#define HBR_SYSTEM_CUDAATTR_$name $value\\n#define HBR_SYSTEM_HIPATTR_$name $value|" \
+            "$HASHBRICK/lib/src/HashBrick/Config.hpp"
+    done
+    # A typo HashBrick's CUDA builds never instantiate: the lambda's argument is a_iv.
+    perl -0pi -e 's/(a_iv \+= baseIV;\s*\n\s*const iixvec_type vecIdxs = )iv;/${1}a_iv;/g' \
+        "$HASHBRICK/lib/src/HashBrick/HashLayout.hpp"
     grep -E "^(CXX|CXXFLAGS|HIPFLAGS|HIPARCH) " "$defs" | sed 's/^/    /'
     perl "$HASHBRICK/cudaToHip.pl" -p "$EULER" > "$HIP_DIR/euler-cudaToHip.log"
     # cudaToHip.pl turns __CUDA_ARCH__ into __HIP_DEVICE_COMPILE__ but leaves CUDA's __trap().
@@ -128,7 +154,8 @@ make -C "$EULER" --no-print-directory -j "$JOBS" HASHBRICK_HOME="$HASHBRICK" all
 cat > "$BUILD_DIR/env-hip.sh" <<ENV
 export CGNS_DIR=$CGNS_DIR
 export EULER_EXE=$EULER/main_gpu
-export EULER_SPACEDIM=$EULER_SPACEDIM
+export EULER_SPACEDIM=$SPACEDIM
+export EULER_INPUT=$EULER/inputFiles/ShockTube.input
 export MAKE_OBS_EXE=$MAKE_OBS_EXE
 ENV
-step "done: $EULER/main_gpu (spacedim $EULER_SPACEDIM); paths in $BUILD_DIR/env-hip.sh"
+step "done: $EULER/main_gpu (spacedim $SPACEDIM); paths in $BUILD_DIR/env-hip.sh"

@@ -8,7 +8,7 @@ this member's file in restart_dir, which the analysis passes on through next_cyc
 
 Params (from the campaign config, plus restart_dir from the analysis):
   exe              euler-miniapp binary; default $EULER_EXE, then the CPU build in external/
-  input            input file; default ShockTube.input from euler-miniapp
+  input            input file; default $EULER_INPUT, then ShockTube.input from euler-miniapp
   spacedim         dimension HashBrick was built for; default $EULER_SPACEDIM, then 2
   steps_per_cycle  required
   overrides        {"key": value} ParmParse overrides, e.g. {"number_cells": "31 31"};
@@ -68,7 +68,8 @@ def forecast(params, workdir, cycle, restart_dir=None, member=None):
     """Run euler-miniapp in workdir to the end of cycle and return its result. Without
     restart_dir it starts from the initial conditions, perturbed for member if given."""
     exe = params.get("exe") or os.environ.get("EULER_EXE") or os.path.join(EULER_DIR, "main_cpu")
-    input_file = params.get("input") or os.path.join(EULER_DIR, "inputFiles", "ShockTube.input")
+    input_file = params.get("input") or os.environ.get("EULER_INPUT") \
+        or os.path.join(EULER_DIR, "inputFiles", "ShockTube.input")
     spacedim = int(params.get("spacedim") or os.environ.get("EULER_SPACEDIM") or 2)
     if "steps_per_cycle" not in params:
         fail("params.steps_per_cycle is required")
