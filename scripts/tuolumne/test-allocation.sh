@@ -4,7 +4,9 @@
 # Flux instance. This script waits for the allocation to end, then checks the run. Uses
 # configs/tuolumne/euler-allocation.json. LC doesn't allow batch jobs in pdebug.
 #
-# Usage: scripts/tuolumne/test-allocation.sh BANK [RUN_DIR]
+# Usage: scripts/tuolumne/test-allocation.sh [--hip] BANK [RUN_DIR]
+# --hip runs the members on the GPUs, one MI300A each, with the HIP build of euler-miniapp
+# (configs/tuolumne/euler-allocation-hip.json). Without it they run on CPU cores.
 # When the allocation ends, the run directory (minus snapshots) is saved to tuolumne-results/.
 # POLL_SECONDS (default 30) sets how often it checks whether the allocation ended.
 #
@@ -13,15 +15,17 @@
 #   python3 campaign.py run RUN_DIR/config.json
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-bank=${1:?usage: test-allocation.sh BANK [RUN_DIR]}
+hip=
+if [[ ${1:-} == --hip ]]; then hip=-hip; shift; fi
+bank=${1:?usage: test-allocation.sh [--hip] BANK [RUN_DIR]}
 
-"$ROOT/scripts/tuolumne/build.sh"
+"$ROOT/scripts/tuolumne/build.sh" $([[ -n $hip ]] || echo --cpu-only)
 source "$ROOT/scripts/tuolumne/env.sh"
-source "$ROOT/build/tuolumne/env.sh"
-run_dir=${2:-$SAGEST_TEST_ROOT/allocation-$(date +%Y%m%d-%H%M%S)}
+source "$ROOT/build/tuolumne/env${hip}.sh"
+run_dir=${2:-$SAGEST_TEST_ROOT/allocation${hip}-$(date +%Y%m%d-%H%M%S)}
 config=$run_dir/config.json
 if [[ ! -f $config ]]; then
-    python3 "$ROOT/scripts/common/test_config.py" "$ROOT/configs/tuolumne/euler-allocation.json" \
+    python3 "$ROOT/scripts/common/test_config.py" "$ROOT/configs/tuolumne/euler-allocation${hip}.json" \
         "$config" --run-dir "$run_dir" --bank "$bank"
 fi
 echo "==> allocation-mode test in $run_dir"

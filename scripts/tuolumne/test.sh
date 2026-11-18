@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 bank=${1:?usage: test.sh BANK [flux alloc args]}
 shift
-"$ROOT/scripts/tuolumne/build.sh"
+"$ROOT/scripts/tuolumne/build.sh" --cpu-only
 source "$ROOT/scripts/tuolumne/env.sh"
 source "$ROOT/build/tuolumne/env.sh"
 cd "$ROOT"

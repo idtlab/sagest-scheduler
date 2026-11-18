@@ -14,16 +14,40 @@ SLURM = {"job_id": "SLURM_JOB_ID", "step_id": "SLURM_STEP_ID", "account": "SLURM
 FLUX = {"job_id": "FLUX_JOB_ID", "tasks": "FLUX_JOB_SIZE", "nodes": "FLUX_JOB_NNODES"}
 
 
-def gpus():
-    """Names of the GPUs this job can see, or [] without nvidia-smi."""
+def _run(args):
     try:
-        done = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total",
-                               "--format=csv,noheader"], encoding="utf-8", timeout=20,
+        done = subprocess.run(args, encoding="utf-8", timeout=20,
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired):
+        return None
+    return done.stdout if done.returncode == 0 else None
+
+
+def gpus():
+    """Names of the GPUs this job can see, from nvidia-smi or rocm-smi, or []."""
+    out = _run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader"])
+    if out is not None:
+        return [line.strip() for line in out.splitlines() if line.strip()]
+    out = _run(["rocm-smi", "--showproductname", "--csv"])
+    if not out:
         return []
-    return [line.strip() for line in done.stdout.splitlines() if line.strip()] \
-        if done.returncode == 0 else []
+    rows = [line.split(",") for line in out.splitlines() if "," in line]
+    starts = [i for i, row in enumerate(rows) if row[0].strip().lower() == "device"]
+    if not starts:
+        return []
+    rows = rows[starts[0]:]
+    header = [h.strip().lower() for h in rows[0]]
+    column = header.index("card series") if "card series" in header else 1
+    names = [row[column].strip() for row in rows[1:] if len(row) > column]
+    # rocm-smi lists every GPU on the node, not only the ones the job was given.
+    visible = os.environ.get("ROCR_VISIBLE_DEVICES") or os.environ.get("HIP_VISIBLE_DEVICES") \
+        or os.environ.get("CUDA_VISIBLE_DEVICES")
+    if visible:
+        try:
+            names = [names[int(i)] for i in visible.split(",")]
+        except (ValueError, IndexError):
+            pass
+    return names
 
 
 class JobInfo:
@@ -42,8 +66,9 @@ class JobInfo:
         elif env.get("FLUX_JOB_ID"):
             info["scheduler"] = "flux"
             info.update({key: env[var] for key, var in FLUX.items() if env.get(var)})
-        if env.get("CUDA_VISIBLE_DEVICES"):
-            info["cuda_visible_devices"] = env["CUDA_VISIBLE_DEVICES"]
+        for var in ("CUDA_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES", "HIP_VISIBLE_DEVICES"):
+            if env.get(var):
+                info[var.lower()] = env[var]
         info["gpus"] = gpus()
         info["seconds"] = {}
         self.info = {key: value for key, value in info.items() if value is not None}

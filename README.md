@@ -187,8 +187,9 @@ phase took, and `sacct`'s accounting for the same jobs.
 
 ### Tuolumne
 
-Tuolumne's GPUs are AMD MI300As, which `mlef` (CUDA) can't use, so its tests run CPU members
-with the MLEF stub. From a login node, first check what login mode relies on:
+Tuolumne's GPUs are AMD MI300As, which `mlef` (CUDA) can't use, so the analysis there is always
+the MLEF stub. Members run on CPU cores, or on the GPUs with `--hip`. From a login node, first
+check what login mode relies on:
 
 ```bash
 flux getattr instance-level        # must print 0 for login mode
@@ -202,7 +203,16 @@ pauses instead of resubmitting, so fix the pattern in `parse_jobs`. Then:
 scripts/tuolumne/test.sh BANK              # unit tests in a 30-minute pdebug allocation
 scripts/tuolumne/test-login.sh BANK        # in tmux: one flux job per member, pbatch
 scripts/tuolumne/test-allocation.sh BANK   # one pbatch node, all jobs inside its Flux instance
+scripts/tuolumne/test-login.sh --hip BANK  # the same with one GPU per member (also test-allocation.sh)
 ```
+
+The HIP build (`scripts/tuolumne/build-hip.sh`, run by `scripts/tuolumne/build.sh` unless
+`--cpu-only`) uses HashBrick's `automated_hip` branch with the CGNS restart commit from the
+`libMLEF` branch applied, since `automated_hip` doesn't have it yet. HashBrick's configure and
+`cudaToHip.pl` rewrite the CUDA sources in place, so it works on copies of HashBrick and
+euler-miniapp under `build/tuolumne/hip/` and leaves `external/` as the CUDA source the other
+machines build. It loads the `rocm` module (`SAGEST_HIP_MODULES` for others), compiles for
+`gfx942` and uses ROCm's `amdclang++` as the host compiler (`HIP_ARCH`, `HIP_CXX`).
 
 They work like the Perlmutter tests: run directories go under `/p/lustre*/$USER/sagest-tests`
 (or `$SAGEST_TEST_ROOT`), and results are saved to `tuolumne-results/`. `scripts/tuolumne/env.sh`
@@ -225,4 +235,5 @@ runs the example components instead of euler-miniapp.
   running untracked, and its member is submitted again in a new directory.
 - Slurm login mode has run on Perlmutter, with both the stub and the real `mlef`
   (`perlmutter-results/`). Allocation mode has only run against `tests/fake_slurm`. The
-  Tuolumne scripts have only run in a local Flux instance.
+  Tuolumne scripts have only run in a local Flux instance, and the HIP build has only been
+  checked up to compiling, on a machine without ROCm.

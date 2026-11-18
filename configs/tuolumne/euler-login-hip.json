@@ -1,0 +1,32 @@
+{
+  "name": "euler-login-hip",
+  "run_dir": "../../runs/tuolumne-login-hip",
+  "scheduler": "flux",
+  "cycles": 2,
+  "poll_seconds": 15,
+  "queue": "pbatch",
+  "bank": "YOUR_BANK",
+  "time": {"member": "2m", "analysis": "2m", "buffer": "3m"},
+  "ensemble": {
+    "size": 4,
+    "nodes": 1,
+    "flux_args": ["-g", "1"],
+    "command": ["python3", "{config_dir}/../../components/euler_member.py"],
+    "params": {
+      "steps_per_cycle": 20,
+      "overrides": {"number_cells": "63 63"},
+      "perturb": {"sigma": 0.05, "seed_base": 1,
+                  "keys": {"SHOCK.pressureLow": 10000, "SHOCK.pressureHigh": 100000,
+                           "SHOCK.densityLow": 0.125, "SHOCK.densityHigh": 1.0}}
+    },
+    "retries": 1,
+    "failures": {
+      "NUMERICAL_INSTABILITY": {"exit_code": 20, "retries": 0}
+    }
+  },
+  "analysis": {
+    "nodes": 1,
+    "command": ["python3", "{config_dir}/../../components/mlef_stub.py"],
+    "retries": 1
+  }
+}
