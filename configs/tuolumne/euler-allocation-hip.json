@@ -6,8 +6,8 @@
   "poll_seconds": 5,
   "queue": "pbatch",
   "bank": "YOUR_BANK",
-  "time": {"member": "5m", "analysis": "2m", "buffer": "1m"},
-  "allocation": {"nodes": 1, "time": "30m"},
+  "time": {"member": "5m", "analysis": "6m", "buffer": "1m"},
+  "allocation": {"nodes": 1, "time": "45m"},
   "ensemble": {
     "size": 4,
     "flux_args": ["-c", "2", "-g", "1"],
@@ -25,8 +25,8 @@
     }
   },
   "analysis": {
-    "flux_args": ["-c", "1"],
-    "command": ["python3", "{config_dir}/../../components/mlef_stub.py"],
+    "flux_args": ["-c", "2", "-g", "1"],
+    "command": ["python3", "{config_dir}/../../components/mlef_analysis.py"],
     "retries": 1
   }
 }

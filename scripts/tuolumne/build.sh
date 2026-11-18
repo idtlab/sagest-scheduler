@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Tuolumne build, from a login node (login and compute nodes are both MI300A nodes, so
 # HashBrick's -march=native is safe). First the CPU build from external/ (CPU members, the
-# unit tests and make_obs), then the HIP build of euler-miniapp for GPU members
-# (scripts/tuolumne/build-hip.sh). libMLEF's mlef needs CUDA, so the analysis here is the stub.
+# unit tests and make_obs), then the HIP builds of euler-miniapp and libMLEF's mlef for GPU runs
+# (scripts/tuolumne/build-hip.sh).
 #
 # Usage: build.sh [--cpu-only] [-j N] [--spacedim 2|3] [--clean]
 set -euo pipefail

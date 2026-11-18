@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# HIP build of euler-miniapp for Tuolumne's MI300A GPUs. Needs the CPU build first
-# (scripts/tuolumne/build.sh runs both) for CGNS.
+# HIP build of euler-miniapp and libMLEF's mlef for Tuolumne's MI300A GPUs. Needs the CPU
+# build first (scripts/tuolumne/build.sh runs both) for CGNS.
 #
 # The commits the submodules pin use an older HashBrick API than any HashBrick branch with HIP
 # support. So this builds HashBrick's key_cache branch (HIP support plus newer work) with
@@ -11,9 +11,11 @@
 # HashBrick's configure rewrites the CUDA sources into .hip files in place (cudaToHip.pl), and
 # euler-miniapp's sources need the same conversion. Both are done on copies under
 # $BUILD_DIR/hip so that external/ stays the CUDA source the other machines build. Configure
-# follows the "Using
-# Tuolumne" page of HashBrick's wiki; the settings it gets wrong for this build are corrected
-# in the generated Make.defs and Config.hpp afterwards.
+# follows the "Using Tuolumne" page of HashBrick's wiki; the settings it gets wrong for this
+# build are corrected in the generated Make.defs and Config.hpp afterwards.
+#
+# libMLEF is built from the commit its submodule pins, converted to HIP, hipBLAS and hipSOLVER
+# by scripts/tuolumne/hipify-mlef.pl, also on a copy.
 #
 # Usage: build-hip.sh [-j N] [--clean]
 # Environment: BUILD_DIR (required), HIP_HASHBRICK_REF and HIP_EULER_REF (default
@@ -21,7 +23,8 @@
 #   66a2313, empty to skip), HIP_SPACEDIM (default 3), ROCM_PATH (default: from hipcc),
 #   HIP_ARCH (default gfx942, MI300A),
 #   SAGEST_HIP_MODULES (default rocmcc/7.14-magic; see env.sh)
-# Result: $BUILD_DIR/hip/euler-miniapp/main_gpu and $BUILD_DIR/env-hip.sh.
+# Result: $BUILD_DIR/hip/euler-miniapp/main_gpu, $BUILD_DIR/hip/libMLEF/mlef (and its tests)
+# and $BUILD_DIR/env-hip.sh.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -30,6 +33,7 @@ BUILD_DIR=$(cd "$BUILD_DIR" && pwd)
 HIP_DIR=$BUILD_DIR/hip
 HASHBRICK_SRC=$ROOT/external/hashbrick
 EULER_SRC=$ROOT/external/euler-miniapp
+LIBMLEF_SRC=$ROOT/external/libMLEF
 REF=${HIP_HASHBRICK_REF:-origin/key_cache}
 RESTART=${HIP_RESTART_COMMIT-8bdea8e}
 EULER_REF=${HIP_EULER_REF:-origin/key_cache}
@@ -154,11 +158,39 @@ make -C "$HASHBRICK/lib" --no-print-directory -j "$JOBS"
 step "building euler-miniapp (HIP)"
 make -C "$EULER" --no-print-directory -j "$JOBS" HASHBRICK_HOME="$HASHBRICK" all
 
+# libMLEF is quick to build, so it has its own stamp and is rebuilt from scratch when it, the
+# conversion or the toolchain changes.
+MLEF=$HIP_DIR/libMLEF
+mlef_commit=$(git -C "$LIBMLEF_SRC" rev-parse HEAD)
+mlef_config="libmlef=$mlef_commit hipify=$(md5sum < "$ROOT/scripts/tuolumne/hipify-mlef.pl" | cut -c1-8) cgns=$CGNS_DIR rocm=$ROCM_PATH arch=$HIP_ARCH"
+if (( CLEAN )) || [[ ! -x $MLEF/mlef || "$(cat "$MLEF/sagest-config" 2>/dev/null)" != "$mlef_config" ]]; then
+    step "converting libMLEF (${mlef_commit:0:7}) to HIP in $MLEF"
+    rm -rf "$MLEF"
+    mkdir -p "$MLEF"
+    git -C "$LIBMLEF_SRC" archive "$mlef_commit" | tar x -C "$MLEF"
+    (cd "$MLEF" && perl "$ROOT/scripts/tuolumne/hipify-mlef.pl" *.cu *.hpp *.cpp tests/*.cu tests/*.cpp)
+
+    step "building libMLEF and its tests (HIP)"
+    # hipcc compiles .cu files as HIP. No -x hip here: libMLEF's makefile links with the same
+    # flags, and -x hip would make the linker read the objects as source.
+    inc="-I$CGNS_DIR/include -I$ROCM_PATH/include"
+    make -C "$MLEF" --no-print-directory -j "$JOBS" all tests CGNS_DIR="$CGNS_DIR" \
+        CXX="$HIP_CXX" NVCC="$HIP_CXX" \
+        CXXFLAGS="-std=c++17 -O2 -fPIE --offload-arch=$HIP_ARCH $inc" \
+        NVCCFLAGS="-std=c++17 -O2 -fPIE --offload-arch=$HIP_ARCH $inc" \
+        CUDA_LIB="-L$ROCM_PATH/lib -lhipblas -lamdhip64 -Wl,-rpath,$ROCM_PATH/lib:$CGNS_DIR/lib" \
+        MATH_LIB="-lhipsolver"
+    echo "$mlef_config" > "$MLEF/sagest-config"
+else
+    step "libMLEF (HIP) is up to date"
+fi
+
 cat > "$BUILD_DIR/env-hip.sh" <<ENV
 export CGNS_DIR=$CGNS_DIR
 export EULER_EXE=$EULER/main_gpu
 export EULER_SPACEDIM=$SPACEDIM
 export EULER_INPUT=$EULER/inputFiles/ShockTube.input
 export MAKE_OBS_EXE=$MAKE_OBS_EXE
+export MLEF_EXE=$MLEF/mlef
 ENV
-step "done: $EULER/main_gpu (spacedim $SPACEDIM); paths in $BUILD_DIR/env-hip.sh"
+step "done: $EULER/main_gpu (spacedim $SPACEDIM) and $MLEF/mlef; paths in $BUILD_DIR/env-hip.sh"

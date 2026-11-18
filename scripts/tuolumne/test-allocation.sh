@@ -5,8 +5,9 @@
 # configs/tuolumne/euler-allocation.json. LC doesn't allow batch jobs in pdebug.
 #
 # Usage: scripts/tuolumne/test-allocation.sh [--hip] BANK [RUN_DIR]
-# --hip runs the members on the GPUs, one MI300A each, with the HIP build of euler-miniapp
-# (configs/tuolumne/euler-allocation-hip.json). Without it they run on CPU cores.
+# Without --hip, members run on CPU cores and the analysis is the MLEF stub. --hip runs the
+# members and the real mlef analysis (with its truth run) on the GPUs, one MI300A each, with
+# the HIP builds of euler-miniapp and libMLEF (configs/tuolumne/euler-allocation-hip.json).
 # When the allocation ends, the run directory (minus snapshots) is saved to tuolumne-results/.
 # POLL_SECONDS (default 30) sets how often it checks whether the allocation ended.
 #
@@ -22,6 +23,8 @@ bank=${1:?usage: test-allocation.sh [--hip] BANK [RUN_DIR]}
 "$ROOT/scripts/tuolumne/build.sh" $([[ -n $hip ]] || echo --cpu-only)
 source "$ROOT/scripts/tuolumne/env.sh"
 source "$ROOT/build/tuolumne/env${hip}.sh"
+# rocm-smi, so job.json can name the GPUs.
+if [[ -n $hip ]]; then load_rocm; fi
 run_dir=${2:-$SAGEST_TEST_ROOT/allocation${hip}-$(date +%Y%m%d-%H%M%S)}
 config=$run_dir/config.json
 if [[ ! -f $config ]]; then

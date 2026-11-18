@@ -187,9 +187,9 @@ phase took, and `sacct`'s accounting for the same jobs.
 
 ### Tuolumne
 
-Tuolumne's GPUs are AMD MI300As, which `mlef` (CUDA) can't use, so the analysis there is always
-the MLEF stub. Members run on CPU cores, or on the GPUs with `--hip`. From a login node, first
-check what login mode relies on:
+Tuolumne's GPUs are AMD MI300As. By default its tests run CPU members with the MLEF stub. With
+`--hip`, members and the real `mlef` analysis run on the GPUs, from HIP builds of euler-miniapp
+and libMLEF. From a login node, first check what login mode relies on:
 
 ```bash
 flux getattr instance-level        # must print 0 for login mode
@@ -203,7 +203,7 @@ pauses instead of resubmitting, so fix the pattern in `parse_jobs`. Then:
 scripts/tuolumne/test.sh BANK              # unit tests in a 30-minute pdebug allocation
 scripts/tuolumne/test-login.sh BANK        # in tmux: one flux job per member, pbatch
 scripts/tuolumne/test-allocation.sh BANK   # one pbatch node, all jobs inside its Flux instance
-scripts/tuolumne/test-login.sh --hip BANK  # the same with one GPU per member (also test-allocation.sh)
+scripts/tuolumne/test-login.sh --hip BANK  # GPU members and mlef, one GPU each (also test-allocation.sh)
 ```
 
 The HIP build (`scripts/tuolumne/build-hip.sh`, run by `scripts/tuolumne/build.sh` unless
@@ -223,6 +223,12 @@ hardware ids up to that rather than 0..227 and euler-miniapp sizes its scratchpa
 `__trap()` becomes `__builtin_trap()`; and a typo in `HashLayout.hpp` that CUDA builds never
 instantiate is fixed. The branches and restart commits can be changed with `HIP_HASHBRICK_REF`,
 `HIP_EULER_REF`, `HIP_RESTART_COMMIT` and `HIP_EULER_RESTART_COMMIT`.
+
+libMLEF is built from the commit its submodule pins, on a copy converted by
+`scripts/tuolumne/hipify-mlef.pl`: CUDA runtime calls become HIP, cuBLAS becomes hipBLAS and
+dense cuSOLVER becomes hipSOLVER's `hipsolverDn` API, which keeps cuSOLVER's signatures. It
+converts only the names libMLEF uses and stops the build if anything else CUDA-specific
+appears. libMLEF's tests are built too, under `build/tuolumne/hip/libMLEF/tests/`.
 
 They work like the Perlmutter tests: run directories go under `/p/lustre*/$USER/sagest-tests`
 (or `$SAGEST_TEST_ROOT`), and results are saved to `tuolumne-results/`. `scripts/tuolumne/env.sh`
@@ -245,5 +251,6 @@ runs the example components instead of euler-miniapp.
   running untracked, and its member is submitted again in a new directory.
 - Slurm login mode has run on Perlmutter, with both the stub and the real `mlef`
   (`perlmutter-results/`). Allocation mode has only run against `tests/fake_slurm`. The
-  Tuolumne scripts have only run in a local Flux instance. The HIP build's sources have only
-  been built for CPU (where the 3D restart works); the HIP compile itself is unverified.
+  Tuolumne allocation test has run there with HIP members and the stub (`tuolumne-results/`);
+  the CPU tests have only run in a local Flux instance. The HIP build of libMLEF hasn't been
+  compiled or run yet.

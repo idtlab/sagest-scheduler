@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Login-mode test: run from a login node (in tmux or screen, since it lasts until the jobs
 # finish). campaign.py stays on the login node and submits every member and analysis as its
-# own flux job in pbatch, using configs/tuolumne/euler-login.json. The analysis is the MLEF
-# stub, since mlef needs CUDA.
+# own flux job in pbatch, using configs/tuolumne/euler-login.json.
 #
 # Usage: scripts/tuolumne/test-login.sh [--hip] BANK [RUN_DIR]
-# --hip runs the members on the GPUs, one MI300A each, with the HIP build of euler-miniapp
-# (configs/tuolumne/euler-login-hip.json). Without it they run on CPU cores.
+# Without --hip, members run on CPU cores and the analysis is the MLEF stub. --hip runs the
+# members and the real mlef analysis (with its truth run) on the GPUs, one MI300A each, with
+# the HIP builds of euler-miniapp and libMLEF (configs/tuolumne/euler-login-hip.json).
 # RUN_DIR defaults to a new directory under $SAGEST_TEST_ROOT (see env.sh). Pass an existing
 # one to resume a test that was interrupted; jobs it already submitted are picked up again.
 # When the campaign ends, the run directory (minus snapshots) is saved to tuolumne-results/.
@@ -23,6 +23,8 @@ fi
 "$ROOT/scripts/tuolumne/build.sh" $([[ -n $hip ]] || echo --cpu-only)
 source "$ROOT/scripts/tuolumne/env.sh"
 source "$ROOT/build/tuolumne/env${hip}.sh"
+# rocm-smi, so job.json can name the GPUs.
+if [[ -n $hip ]]; then load_rocm; fi
 run_dir=${2:-$SAGEST_TEST_ROOT/login${hip}-$(date +%Y%m%d-%H%M%S)}
 config=$run_dir/config.json
 if [[ ! -f $config ]]; then
