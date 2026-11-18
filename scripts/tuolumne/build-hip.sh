@@ -11,7 +11,8 @@
 # Usage: build-hip.sh [-j N] [--clean]
 # Environment: BUILD_DIR (required), HIP_HASHBRICK_REF (default origin/automated_hip),
 #   HIP_RESTART_COMMIT (default 8bdea8e, empty to skip), ROCM_PATH (default: from hipcc),
-#   HIP_CXX (host compiler; default ROCm's amdclang++), HIP_ARCH (default gfx942, MI300A)
+#   HIP_CXX (host compiler; default ROCm's amdclang++), HIP_ARCH (default gfx942, MI300A),
+#   SAGEST_HIP_MODULES (default rocmcc/7.14-magic; see env.sh)
 # Result: $BUILD_DIR/hip/euler-miniapp/main_gpu and $BUILD_DIR/env-hip.sh.
 set -euo pipefail
 
@@ -50,7 +51,20 @@ if ! command -v hipcc >/dev/null; then
     echo "error: no hipcc in PATH; load a rocm module or set SAGEST_HIP_MODULES" >&2
     exit 1
 fi
-ROCM_PATH=${ROCM_PATH:-$(dirname "$(dirname "$(readlink -f "$(command -v hipcc)")")")}
+# HashBrick's HIP code uses libhipcxx (cuda/atomic, hip::atomic). On Tuolumne only the rocmcc
+# 7.14 packages ship it, not the /opt/rocm installs, so use whichever candidate has it.
+hipcc=$(command -v hipcc)
+rocm=
+for dir in ${ROCM_PATH:-} "$(dirname "$(dirname "$hipcc")")" \
+           "$(dirname "$(dirname "$(readlink -f "$hipcc")")")"; do
+    if [[ -x $dir/bin/hipcc && -f $dir/include/cuda/atomic ]]; then rocm=$dir; break; fi
+done
+if [[ -z $rocm ]]; then
+    echo "error: no include/cuda/atomic (libhipcxx) next to $hipcc; HashBrick's HIP code needs it." >&2
+    echo "       On Tuolumne it comes with the rocmcc/7.14-magic module (set SAGEST_HIP_MODULES)." >&2
+    exit 1
+fi
+ROCM_PATH=$rocm
 HIP_ARCH=${HIP_ARCH:-gfx942}
 # HashBrick's .cpp files include hip_runtime.h too, which expects ROCm's clang.
 HIP_CXX=${HIP_CXX:-$(command -v amdclang++ || ls "$ROCM_PATH"/llvm/bin/amdclang++ 2>/dev/null || echo "${CXX:-g++}")}
@@ -63,7 +77,7 @@ fi
 euler_commit=$(git -C "$EULER_SRC" rev-parse HEAD)
 
 # Reconfiguring HashBrick rebuilds everything, so only start over when an input changed.
-config="hashbrick=$hb_commit restart=$RESTART euler=$euler_commit spacedim=$EULER_SPACEDIM cgns=$CGNS_DIR rocm=$ROCM_PATH cxx=$HIP_CXX arch=$HIP_ARCH"
+config="script=$(md5sum < "${BASH_SOURCE[0]}" | cut -c1-8) hashbrick=$hb_commit restart=$RESTART euler=$euler_commit spacedim=$EULER_SPACEDIM cgns=$CGNS_DIR rocm=$ROCM_PATH cxx=$HIP_CXX arch=$HIP_ARCH"
 stamp=$HIP_DIR/sagest-config
 HASHBRICK=$HIP_DIR/hashbrick
 EULER=$HIP_DIR/euler-miniapp
@@ -91,6 +105,9 @@ if (( CLEAN )) || [[ "$(cat "$stamp" 2>/dev/null)" != "$config" ]]; then
         echo "    using --offload-arch=$HIP_ARCH instead"
     fi
     perl "$HASHBRICK/cudaToHip.pl" -p "$EULER" > "$HIP_DIR/euler-cudaToHip.log"
+    # cudaToHip.pl turns __CUDA_ARCH__ into __HIP_DEVICE_COMPILE__ but leaves CUDA's __trap().
+    grep -rlZ --include='*.hpp' --include='*.hip' '__trap()' "$HASHBRICK/lib" "$EULER" \
+        | xargs -0r sed -i 's/__trap()/__builtin_trap()/g'
     echo "$config" > "$stamp"
 fi
 
