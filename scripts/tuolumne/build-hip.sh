@@ -82,8 +82,11 @@ HIP_ARCH=${HIP_ARCH:-gfx942}
 # c++17, and its compiler detection doesn't recognize LC's wrappers, leaving CXXFLAGS empty).
 HIP_CXX=$ROCM_PATH/bin/hipcc
 HIP_CXXFLAGS="-O3 -march=native -std=c++20 -Wall -Wno-unknown-pragmas -x hip --offload-arch=$HIP_ARCH -fgpu-rdc -munsafe-fp-atomics"
-# configure only detects these for CUDA. MI300A: 64-wide wavefronts, 228 compute units.
-GPU_ATTRS="WARP_SIZE=64 MULTIPROCESSOR_COUNT=228"
+# configure only detects these for CUDA. MI300A has 64-wide wavefronts. MULTIPROCESSOR_COUNT
+# only sizes euler-miniapp's scratchpad, which is indexed by smid(). cudaToHip.pl maps that to
+# __smid(), which on gfx942 packs XCC, SE, SH and CU ids into 12 bits rather than counting
+# 0..227, so the scratchpad needs 4096 entries (about 600 MB) to avoid writing past its end.
+GPU_ATTRS="WARP_SIZE=64 MULTIPROCESSOR_COUNT=4096"
 
 commit_of() {  # commit_of REPO REF
     local commit

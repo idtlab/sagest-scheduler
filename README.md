@@ -218,7 +218,8 @@ Configure follows the "Using Tuolumne" page of HashBrick's wiki, including the
 `rocmcc/7.14-magic` module (`SAGEST_HIP_MODULES` for others), the only ROCm on Tuolumne with the
 libhipcxx headers HashBrick needs. The script then corrects what configure and `cudaToHip.pl`
 get wrong for this build: every file, `.cpp` included, is compiled as HIP with `hipcc`, as
-C++20, for `gfx942` (`HIP_ARCH`); the warp size (64) and compute unit count (228) are defined;
+C++20, for `gfx942` (`HIP_ARCH`); the warp size (64) is defined, and the SM count as 4096, since HIP's `__smid()` returns packed
+hardware ids up to that rather than 0..227 and euler-miniapp sizes its scratchpad by it;
 `__trap()` becomes `__builtin_trap()`; and a typo in `HashLayout.hpp` that CUDA builds never
 instantiate is fixed. The branches and restart commits can be changed with `HIP_HASHBRICK_REF`,
 `HIP_EULER_REF`, `HIP_RESTART_COMMIT` and `HIP_EULER_RESTART_COMMIT`.
