@@ -6,7 +6,7 @@
   "poll_seconds": 15,
   "queue": "pbatch",
   "bank": "YOUR_BANK",
-  "time": {"member": "2m", "analysis": "2m", "buffer": "3m"},
+  "time": {"member": "5m", "analysis": "2m", "buffer": "3m"},
   "ensemble": {
     "size": 4,
     "nodes": 1,
